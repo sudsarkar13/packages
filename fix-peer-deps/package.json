@@ -1,0 +1,34 @@
+{
+  "name": "fix-peer-deps",
+  "version": "1.0.12",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "fix-peer-deps": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sudsarkar13/starter-apps.git"
+  },
+  "keywords": [
+    "Node",
+    "npx",
+    "packages",
+    "fix-peer-deps",
+    "fix-peer-dependencies"
+  ],
+  "author": "Sudeepta Sarkar <sudsarkar13@gmail.com>",
+  "license": "MIT",
+  "description": "A tool to fix peer dependencies",
+  "dependencies": {
+    "execa": "^9.4.0",
+    "semver": "^7.6.3"
+  },
+  "bin": {
+    "fix-peer-deps": "./index.js"
+  },
+  "bugs": {
+    "url": "https://github.com/sudsarkar13/starter-apps/issues"
+  },
+  "homepage": "https://github.com/sudsarkar13/starter-apps#readme"
+}
