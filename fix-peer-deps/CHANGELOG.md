@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2024-02-14
+
+### Added
+
+- Added CONTRIBUTING.md with detailed contribution guidelines
+- Added CHANGELOG.md for better version tracking
+- Added more keywords for better npm discoverability
+
+### Changed
+
+- Improved documentation organization
+- Enhanced package.json configuration for npm publication
+- Updated file permissions for CLI execution
+
 ## [1.1.1] - 2024-02-14
 
 ### Added
