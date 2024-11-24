@@ -92,7 +92,8 @@ The tool will:
 2. 📊 Analyze your dependencies
 3. 🚨 Identify peer dependency issues
 4. 💡 Provide clear, actionable suggestions
-5. 🔧 Automatically fix issues (when using --fix)
+5. 📝 Show exact commands to fix issues
+6. 🔧 Automatically fix issues (when using --fix)
 
 ## Supported Package Managers
 
