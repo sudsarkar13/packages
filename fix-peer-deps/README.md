@@ -272,7 +272,16 @@ These are typically development dependencies that may improve your development e
 
 ## Changelog
 
-### Version 1.1.0 (Latest)
+### Version 1.1.1 (Latest)
+
+- 🔨 Fixed reserved word usage in strict mode for better ES module compatibility
+- 🎨 Enhanced documentation formatting and readability
+- 🔄 Internal code improvements and optimizations
+- ⚡️ Better error handling in package analysis
+
+### Version 1.1.0 (Deprecated)
+
+⚠️ This version is deprecated due to strict mode compatibility issues. Please upgrade to version 1.1.1 or later.
 
 - ✨ Added support for multiple package managers (npm, pnpm, Bun)
 - 🎨 Enhanced terminal interface with colors and emojis
@@ -285,14 +294,6 @@ These are typically development dependencies that may improve your development e
 - 🔍 Improved package manager detection
 - 💡 Better suggestion formatting
 - 🐛 Various bug fixes and improvements
-
-### Version 1.0.12 (Deprecated)
-
-- ⚠️ This version is deprecated. Please use version 1.1.0 or later
-- Initial public release
-- Basic Yarn support
-- Peer dependency analysis
-- Basic terminal output
 
 ## Requirements
 
