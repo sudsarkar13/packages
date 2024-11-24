@@ -421,10 +421,21 @@ process.on('SIGINT', () => {
     process.exit(0);
 });
 
-main().catch(error => {
+// Export functions for programmatic use (RunKit, etc.)
+export {
+  analyzePeerDependencies,
+  detectPackageManager,
+  checkDeepPeerDependencies,
+  autoFix
+};
+
+// Only run main if this is called directly (not imported as a module)
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch(error => {
     console.error(chalk.red(`\nError: ${error.message}`));
     if (error.stderr) {
         console.error(chalk.dim(error.stderr));
     }
     process.exit(1);
-});
+  });
+}
