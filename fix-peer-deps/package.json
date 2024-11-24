@@ -62,6 +62,8 @@
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
-    "CONTRIBUTING.md"
-  ]
+    "CONTRIBUTING.md",
+    "example.js"
+  ],
+  "runkitExampleFilename": "example.js"
 }
