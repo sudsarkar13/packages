@@ -1,6 +1,6 @@
 # fix-peer-deps
 
-🔍 A modern CLI tool to analyze and fix peer dependency issues across multiple package managers.
+A modern CLI tool to analyze and fix peer dependency issues across multiple package managers (npm, yarn, pnpm, bun).
 
 ## Description
 
@@ -32,18 +32,16 @@ The tool performs a deep analysis of your project's dependency tree by:
 
 ## Features
 
-✨ **Key Features**:
-
-- Multi-package manager support (Yarn, npm, pnpm, Bun)
-- Beautiful terminal interface with colors and progress indicators
-- Smart package manager detection
-- Detailed analysis and suggestions
-- Interactive progress tracking
-- Clear, emoji-enhanced output
+- 🎯 Accurately detects and categorizes peer dependency issues
+- 🚦 Distinguishes between critical and optional peer dependencies
+- 🔄 Supports modern package managers (npm, yarn 4.x, pnpm, bun)
+- 🎨 Beautiful CLI interface with progress indicators
+- 🧪 Intelligent filtering of development-only dependencies
+- ⚡ Automatic fix mode with `--fix` option
 
 ## Installation
 
-This package is designed to be used with package manager executors, so there's no need for a global installation:
+### Method 1: Run Directly (Recommended for one-time use)
 
 ```bash
 # Using npm
@@ -59,73 +57,217 @@ pnpm dlx fix-peer-deps
 bunx fix-peer-deps
 ```
 
+### Method 2: Global Installation
+
+If you frequently work with multiple Node.js projects, you can install the package globally:
+
+```bash
+# Using npm
+npm install -g fix-peer-deps
+
+# Using yarn
+yarn global add fix-peer-deps
+
+# Using pnpm
+pnpm add -g fix-peer-deps
+
+# Using bun
+bun add -g fix-peer-deps
+```
+
+After global installation:
+
+1. Verify the installation:
+
+   ```bash
+   fix-peer-deps --version
+   ```
+
+2. You can now run the tool from any directory:
+
+   ```bash
+   cd /path/to/your/project
+   fix-peer-deps
+   ```
+
 ## Usage
 
-The tool can be run in different modes:
+### Basic Usage
+
+1. Navigate to your project directory:
+
+   ```bash
+   cd /path/to/your/project
+   ```
+
+2. Run the analysis:
+
+   ```bash
+   fix-peer-deps
+   ```
+
+3. Review the output:
+   - Critical issues that need attention
+   - Optional dependencies that might improve development
+   - Suggested commands to fix issues
+
+4. Fix issues either:
+   - Manually using the suggested commands, or
+   - Automatically using the `--fix` option
+
+### Command Options
 
 ```bash
 # Analyze and get suggestions
-npx fix-peer-deps
+fix-peer-deps
 
 # Automatically fix issues
-npx fix-peer-deps --fix
+fix-peer-deps --fix
 
 # Show help information
-npx fix-peer-deps --help
+fix-peer-deps --help
 
 # Check version
-npx fix-peer-deps -v
+fix-peer-deps -v
 # or
-npx fix-peer-deps --version
+fix-peer-deps --version
 ```
 
 ### Available Commands
 
-- `npx fix-peer-deps`: Analyzes your project and provides suggestions for fixing peer dependency issues
-- `npx fix-peer-deps --fix`: Automatically installs missing peer dependencies and updates your project
-- `npx fix-peer-deps -h, --help`: Shows help information and available commands
-- `npx fix-peer-deps -v, --version`: Shows the current version of the tool
+- `fix-peer-deps`: Analyzes your project and provides suggestions
+- `fix-peer-deps --fix`: Automatically installs missing peer dependencies
+- `fix-peer-deps -h, --help`: Shows help information
+- `fix-peer-deps -v, --version`: Shows the current version
 
 The tool will:
 
-1. 🔍 Automatically detect your package manager
-2. 📊 Analyze your dependencies
-3. 🚨 Identify peer dependency issues
-4. 💡 Provide clear, actionable suggestions
-5. 📝 Show exact commands to fix issues
-6. 🔧 Automatically fix issues (when using --fix)
+1. Detect your package manager
+2. Analyze your dependencies
+3. Categorize issues by severity
+4. Provide specific commands to fix critical issues
+5. List optional dependencies that might improve your development experience
+
+## Understanding the Output
+
+The tool categorizes peer dependency issues into two types:
+
+### Critical Issues (🚨)
+
+- Missing or incompatible dependencies that are required for packages to function
+- These should typically be resolved to ensure proper functionality
+- Can be automatically fixed using the `--fix` option
+
+### Optional Issues (⚠️)
+
+- Development dependencies that might enhance your development experience
+- Type definitions (@types/*)
+- Optional peer dependencies
+- Development tool integrations
+
+## Common Use Cases
+
+1. **Starting a New Project**:
+
+   ```bash
+   cd my-new-project
+   npm init -y
+   npm install some-package
+   fix-peer-deps  # Check for any peer dependencies
+   ```
+
+2. **Fixing Dependency Issues**:
+
+   ```bash
+   fix-peer-deps --fix  # Automatically install missing dependencies
+   ```
+
+3. **Auditing Dependencies**:
+
+   ```bash
+   fix-peer-deps  # Review all peer dependency relationships
+   ```
+
+4. **CI/CD Integration**:
+
+   ```bash
+   # In your CI script
+   fix-peer-deps || exit 1  # Exit with error if critical issues found
+   ```
+
+## Configuration
+
+The tool automatically detects your package manager based on:
+
+1. The `packageManager` field in package.json
+2. Lock files present in your project
+3. Defaults to npm if no specific manager is detected
 
 ## Supported Package Managers
 
-- Yarn (v4.x.x)
-- npm
+- npm (all versions)
+- yarn (including yarn 4.x)
 - pnpm
-- Bun
+- bun
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Command Not Found**
+
+   ```bash
+   # Reinstall globally
+   npm install -g fix-peer-deps
+   ```
+
+2. **Permission Errors**
+
+   ```bash
+   # Use sudo for global installation if needed
+   sudo npm install -g fix-peer-deps
+   ```
+
+3. **Package Manager Detection Issues**
+
+   ```bash
+   # Ensure you're in a directory with package.json
+   ls package.json
+   ```
+
+### Error Messages
+
+- "No package.json found": Navigate to your project root directory
+- "Failed to fix dependencies": Check your network connection and try again
+- "Analysis failed": Ensure your package manager is properly installed
 
 ## Output Example
 
 ```text
 🔍 Fix Peer Dependencies Tool
 
-ℹ️  Detected package manager: yarn
+📋 Found Issues:
+• 2 critical issues
+• 3 optional issues
 
-📋 Analysis Results
-✅ Found 2 peer dependency issues
+🚨 Critical Issues:
+react requires react-dom@^18.2.0
+Current: missing
 
-Analyzing Issues |██████████| 100% || 2/2 Issues
+⚠️ Optional Issues:
+typescript-eslint requires @types/node@*
+Current: missing
 
-🔧 Suggested Fixes
-ℹ️  Missing Dependency: react
-Required by:
-  • @emotion/react@11.0.0
-  • @mui/material@5.0.0
+📝 Suggested Actions:
 
-To fix, run:
-  yarn add react --dev
+Run the following command to fix critical issues:
+yarn add react-dom@"^18.2.0"
 
-📝 Additional Steps
-ℹ️  1. After installing dependencies, run: yarn install
-ℹ️  2. If issues persist, add resolutions to package.json
+Or run with --fix to automatically fix these issues:
+fix-peer-deps --fix
+
+Optional dependencies can be installed if needed:
+These are typically development dependencies that may improve your development experience
 ```
 
 ## Changelog
@@ -163,7 +305,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT © [Sudeepta Sarkar](https://github.com/sudsarkar13)
 
 ## Author
 
@@ -172,4 +314,4 @@ Sudeepta Sarkar <sudsarkar13@gmail.com>
 ## Issues
 
 If you encounter any problems or have suggestions for improvements, please file an issue at:
-<https://github.com/sudsarkar13/starter-apps/issues>
+<https://github.com/sudsarkar13/packages/issues>
