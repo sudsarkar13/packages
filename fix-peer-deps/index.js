@@ -1,19 +1,31 @@
 #!/usr/bin/env node
 
-import { execSync } from 'child_process';
-import fs from 'fs/promises';
-import path from 'path';
 import chalk from 'chalk';
-import ora from 'ora';
 import cliProgress from 'cli-progress';
+import { execa } from 'execa';
+import ora from 'ora';
+import semver from 'semver';
+import { readFile } from 'fs/promises';
+import { resolve } from 'path';
 
 const VERSION = '1.1.0';
+const IGNORE_PATTERNS = [
+    /^@types\//,  // Ignore TypeScript type definitions
+    /^@babel\//,  // Ignore Babel plugins
+    /^@eslint\//  // Ignore ESLint plugins
+];
+
+const OPTIONAL_DEPS = [
+    'supports-color',
+    'encoding',
+    'ts-node'
+];
 
 const HELP_TEXT = `
 ${chalk.bold.cyan('fix-peer-deps')} - A tool to analyze and fix peer dependency issues
 
 ${chalk.bold('USAGE')}
-  $ npx fix-peer-deps [options]
+  $ fix-peer-deps [options]
 
 ${chalk.bold('OPTIONS')}
   ${chalk.yellow('--fix')}        Automatically fix peer dependency issues by installing missing dependencies
@@ -21,299 +33,273 @@ ${chalk.bold('OPTIONS')}
   ${chalk.yellow('-v, --version')} Show version number
   
 ${chalk.bold('EXAMPLES')}
-  $ npx fix-peer-deps              ${chalk.dim('# Analyze and show suggestions')}
-  $ npx fix-peer-deps --fix        ${chalk.dim('# Analyze and automatically fix issues')}
-  $ npx fix-peer-deps --help       ${chalk.dim('# Show this help message')}
-  $ npx fix-peer-deps --version    ${chalk.dim('# Show version number')}
+  $ fix-peer-deps              ${chalk.dim('# Analyze and show suggestions')}
+  $ fix-peer-deps --fix        ${chalk.dim('# Analyze and automatically fix issues')}
+  $ fix-peer-deps --help       ${chalk.dim('# Show this help message')}
+  $ fix-peer-deps --version    ${chalk.dim('# Show version number')}
 
 ${chalk.bold('VERSION')}
   ${VERSION}
 `;
 
-const log = {
-  info: (msg) => console.log(chalk.blue('ℹ️  ') + msg),
-  success: (msg) => console.log(chalk.green('✅ ') + msg),
-  warning: (msg) => console.log(chalk.yellow('⚠️  ') + msg),
-  error: (msg) => console.log(chalk.red('❌ ') + msg),
-  title: (msg) => console.log('\n' + chalk.bold.cyan(msg) + '\n')
-};
-
-async function getPackageManager() {
-  const userAgent = process.env.npm_config_user_agent;
-  if (userAgent) {
-    if (userAgent.startsWith('yarn')) return 'yarn';
-    if (userAgent.startsWith('pnpm')) return 'pnpm';
-    if (userAgent.startsWith('npm')) return 'npm';
-    if (userAgent.startsWith('bun')) return 'bun';
-  }
-  
-  // Fallback detection based on lock files
-  try {
-    const files = await fs.readdir(process.cwd());
-    if (files.includes('yarn.lock')) return 'yarn';
-    if (files.includes('pnpm-lock.yaml')) return 'pnpm';
-    if (files.includes('package-lock.json')) return 'npm';
-    if (files.includes('bun.lockb')) return 'bun';
-  } catch (err) {
-    log.error('Unable to detect package manager from lock files');
-  }
-  
-  return 'npm'; // Default to npm
-}
-
-async function analyzePeerDependencies(packageManager) {
-  const spinner = ora('Analyzing peer dependencies...').start();
-  let issues = [];
-
-  try {
-    switch (packageManager) {
-      case 'yarn':
-        const yarnOutput = execSync('yarn explain peer-requirements', { encoding: 'utf8' });
-        issues = yarnOutput.split('\n')
-          .filter(line => line.includes("doesn't provide") || line.includes("doesn't satisfy"))
-          .map(line => ({ type: 'yarn', message: line.trim() }));
-        break;
-
-      case 'npm':
-        const npmOutput = execSync('npm ls', { encoding: 'utf8' });
-        issues = npmOutput.split('\n')
-          .filter(line => line.includes('peer dep missing'))
-          .map(line => ({ type: 'npm', message: line.trim() }));
-        break;
-
-      case 'pnpm':
-        const pnpmOutput = execSync('pnpm ls', { encoding: 'utf8' });
-        issues = pnpmOutput.split('\n')
-          .filter(line => line.includes('peer dependencies'))
-          .map(line => ({ type: 'pnpm', message: line.trim() }));
-        break;
-
-      case 'bun':
-        const bunOutput = execSync('bun pm ls', { encoding: 'utf8' });
-        issues = bunOutput.split('\n')
-          .filter(line => line.includes('missing peer'))
-          .map(line => ({ type: 'bun', message: line.trim() }));
-        break;
-
-      default:
-        throw new Error('Unsupported package manager');
-    }
-
-    spinner.succeed('Analysis complete');
-    return issues;
-  } catch (error) {
-    spinner.fail('Analysis failed');
-    throw error;
-  }
-}
-
-async function suggestFixes(issues, packageManager) {
-  const packageJson = JSON.parse(await fs.readFile('package.json', 'utf8'));
-  const suggestions = new Map();
-
-  log.title('📋 Analysis Results');
-
-  if (issues.length === 0) {
-    log.success('No peer dependency issues detected!');
-    return;
-  }
-
-  log.info(`Found ${chalk.bold(issues.length)} peer dependency issues:`);
-  
-  const progressBar = new cliProgress.SingleBar({
-    format: 'Analyzing Issues |' + chalk.cyan('{bar}') + '| {percentage}% || {value}/{total} Issues',
-    barCompleteChar: '\u2588',
-    barIncompleteChar: '\u2591',
-  });
-
-  progressBar.start(issues.length, 0);
-
-  for (const issue of issues) {
-    let match;
-    switch (issue.type) {
-      case 'yarn':
-        match = issue.message.match(/(\S+)@npm:(\S+) doesn't provide (\S+) to (\S+)@npm:(\S+)/);
-        if (match) {
-          const [, provider, providerVersion, missing, requester, requesterVersion] = match;
-          if (!suggestions.has(missing)) {
-            suggestions.set(missing, new Set());
-          }
-          suggestions.get(missing).add(`${requester}@${requesterVersion}`);
+async function detectPackageManager() {
+    const spinner = ora('Detecting package manager...').start();
+    const files = ['yarn.lock', 'package-lock.json', 'pnpm-lock.yaml', 'bun.lockb'];
+    
+    try {
+        // First check if we're in a Node.js project
+        const packageJsonPath = resolve(process.cwd(), 'package.json');
+        const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8'));
+        
+        // Check packageManager field first
+        if (packageJson.packageManager) {
+            const [name] = packageJson.packageManager.split('@');
+            spinner.succeed(`Detected package manager from package.json: ${name}`);
+            return name;
         }
-        break;
-      // Add parsing logic for other package managers here
+
+        // Then check for lock files
+        for (const file of files) {
+            try {
+                await readFile(resolve(process.cwd(), file));
+                const name = file.split('.')[0];
+                spinner.succeed(`Detected package manager from lock file: ${name}`);
+                return name;
+            } catch {}
+        }
+        
+        // Default to npm if no specific manager is detected
+        spinner.succeed('No specific package manager detected, using npm');
+        return 'npm';
+    } catch (error) {
+        spinner.fail('No package.json found in current directory');
+        console.error(chalk.red('\nError: This command must be run in a Node.js project directory'));
+        console.error(chalk.dim('Make sure you are in a directory with a package.json file'));
+        process.exit(1);
     }
-    progressBar.increment();
-  }
-
-  progressBar.stop();
-
-  log.title('🔧 Suggested Fixes');
-
-  for (const [missing, requesters] of suggestions) {
-    log.info(`\nMissing Dependency: ${chalk.bold(missing)}`);
-    console.log(chalk.dim('Required by:'));
-    for (const requester of requesters) {
-      console.log(chalk.dim('  • ') + requester);
-    }
-
-    const installCmd = getInstallCommand(packageManager, missing);
-    console.log('\nTo fix, run:');
-    console.log(chalk.cyan(`  ${installCmd}`));
-  }
-
-  log.title('📝 Additional Steps');
-  log.info(`1. After installing dependencies, run: ${chalk.cyan(getUpdateCommand(packageManager))}`);
-  log.info('2. If issues persist, add resolutions to package.json:');
-  console.log(chalk.dim(`
-    "resolutions": {
-      "<package>": "<version>"
-    }
-  `));
 }
 
-async function executeCommand(command) {
-  try {
-    execSync(command, { stdio: 'inherit' });
-    return true;
-  } catch (error) {
-    log.error(`Failed to execute command: ${command}`);
-    log.error(error.message);
-    return false;
-  }
+async function getDependencies(packageManager) {
+    try {
+        let cmd, args;
+        switch (packageManager) {
+            case 'yarn':
+                cmd = 'yarn';
+                args = ['list', '--json', '--depth=0'];
+                break;
+            case 'pnpm':
+                cmd = 'pnpm';
+                args = ['list', '--json', '--depth=0'];
+                break;
+            default: // npm and others
+                cmd = 'npm';
+                args = ['list', '--json', '--depth=0'];
+        }
+
+        const { stdout } = await execa(cmd, args);
+        return JSON.parse(stdout);
+    } catch (error) {
+        // Handle case where the command fails but returns valid JSON
+        if (error.stdout) {
+            try {
+                return JSON.parse(error.stdout);
+            } catch {
+                // If parsing fails, throw the original error
+                throw error;
+            }
+        }
+        throw error;
+    }
+}
+
+async function analyzePeerDependencies() {
+    const spinner = ora('Analyzing dependencies...').start();
+    
+    try {
+        const packageManager = await detectPackageManager();
+        const deps = await getDependencies(packageManager);
+        
+        // Analyze peer dependencies
+        const issues = [];
+        const progress = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
+        
+        const dependencies = deps.dependencies || {};
+        progress.start(Object.keys(dependencies).length, 0);
+        
+        for (const [name, info] of Object.entries(dependencies)) {
+            if (info.peerDependencies) {
+                for (const [peer, version] of Object.entries(info.peerDependencies)) {
+                    // Skip if matches ignore patterns
+                    if (IGNORE_PATTERNS.some(pattern => pattern.test(peer))) continue;
+                    
+                    // Mark as optional if in OPTIONAL_DEPS
+                    const isOptional = OPTIONAL_DEPS.includes(peer);
+                    
+                    const peerInfo = dependencies[peer];
+                    if (!peerInfo || !semver.satisfies(peerInfo.version, version)) {
+                        issues.push({
+                            packageName: name,
+                            peer,
+                            required: version,
+                            current: peerInfo?.version || 'missing',
+                            isOptional
+                        });
+                    }
+                }
+            }
+            progress.increment();
+        }
+        
+        progress.stop();
+        spinner.succeed('Analysis complete');
+        
+        return { issues, packageManager };
+    } catch (error) {
+        spinner.fail('Analysis failed');
+        console.error(chalk.red(`\nError: ${error.message}`));
+        if (error.stderr) {
+            console.error(chalk.dim(error.stderr));
+        }
+        process.exit(1);
+    }
 }
 
 async function autoFix(issues, packageManager) {
-  log.title('🔧 Automatic Fix Mode');
-  
-  if (issues.length === 0) {
-    log.success('No issues to fix!');
-    return true;
-  }
-
-  log.info(`Found ${chalk.bold(issues.length)} issues to fix`);
-  
-  const spinner = ora('Installing missing dependencies...').start();
-  const suggestions = new Map();
-  let success = true;
-
-  // Collect all missing dependencies
-  for (const issue of issues) {
-    let match;
-    switch (issue.type) {
-      case 'yarn':
-        match = issue.message.match(/(\S+)@npm:(\S+) doesn't provide (\S+) to (\S+)@npm:(\S+)/);
-        if (match) {
-          const [, , , missing] = match;
-          suggestions.set(missing, true);
-        }
-        break;
-      // Add parsing logic for other package managers
-    }
-  }
-
-  // Install all missing dependencies
-  for (const [pkg] of suggestions) {
-    const installCmd = getInstallCommand(packageManager, pkg);
-    spinner.text = `Installing ${pkg}...`;
+    console.log(chalk.bold('\n🔧 Automatic Fix Mode\n'));
     
-    if (!await executeCommand(installCmd)) {
-      success = false;
-      spinner.fail(`Failed to install ${pkg}`);
-      continue;
+    if (issues.length === 0) {
+        console.log(chalk.green('✨ No issues to fix!'));
+        return;
     }
-  }
 
-  // Update dependencies
-  spinner.text = 'Updating dependencies...';
-  const updateCmd = getUpdateCommand(packageManager);
-  if (!await executeCommand(updateCmd)) {
-    success = false;
-    spinner.fail('Failed to update dependencies');
-  }
+    const critical = issues.filter(i => !i.isOptional);
+    const optional = issues.filter(i => i.isOptional);
+    
+    if (critical.length === 0) {
+        console.log(chalk.yellow('ℹ️  Only optional dependencies found. No critical fixes needed.'));
+        return;
+    }
 
-  if (success) {
-    spinner.succeed('All dependencies installed and updated successfully');
-    log.success('Fixed all peer dependency issues!');
-  } else {
-    spinner.fail('Some issues could not be fixed automatically');
-    log.warning('Please review the errors above and try to fix them manually');
-  }
-
-  return success;
-}
-
-function getInstallCommand(packageManager, pkg) {
-  switch (packageManager) {
-    case 'yarn':
-      return `yarn add ${pkg} --dev`;
-    case 'npm':
-      return `npm install ${pkg} --save-dev`;
-    case 'pnpm':
-      return `pnpm add ${pkg} --save-dev`;
-    case 'bun':
-      return `bun add ${pkg} --dev`;
-    default:
-      return `npm install ${pkg} --save-dev`;
-  }
-}
-
-function getUpdateCommand(packageManager) {
-  switch (packageManager) {
-    case 'yarn':
-      return 'yarn install';
-    case 'npm':
-      return 'npm install';
-    case 'pnpm':
-      return 'pnpm install';
-    case 'bun':
-      return 'bun install';
-    default:
-      return 'npm install';
-  }
+    const command = packageManager === 'yarn' ? 'yarn add' : 
+                   packageManager === 'pnpm' ? 'pnpm add' : 'npm install';
+    
+    const spinner = ora('Installing missing dependencies...').start();
+    
+    try {
+        const depsToInstall = critical.map(i => `${i.peer}@"${i.required}"`);
+        
+        // Split installation into chunks to avoid command line length limits
+        const chunkSize = 10;
+        for (let i = 0; i < depsToInstall.length; i += chunkSize) {
+            const chunk = depsToInstall.slice(i, i + chunkSize);
+            spinner.text = `Installing dependencies (${i + 1}-${Math.min(i + chunkSize, depsToInstall.length)} of ${depsToInstall.length})...`;
+            await execa(command.split(' ')[0], [...command.split(' ').slice(1), ...chunk]);
+        }
+        
+        spinner.succeed('Successfully installed missing dependencies');
+        
+        // Run package manager's install command to ensure everything is properly linked
+        spinner.start('Updating dependencies...');
+        await execa(packageManager, ['install']);
+        spinner.succeed('Dependencies updated successfully');
+        
+        console.log(chalk.green('\n✨ Fixed all critical peer dependency issues!'));
+        
+        if (optional.length > 0) {
+            console.log(chalk.yellow('\nℹ️  Note: Some optional dependencies were skipped.'));
+            console.log(chalk.gray('These are typically development dependencies that may improve your development experience.'));
+        }
+    } catch (error) {
+        spinner.fail('Failed to fix dependencies');
+        console.error(chalk.red(`\nError: ${error.message}`));
+        if (error.stderr) {
+            console.error(chalk.dim(error.stderr));
+        }
+        process.exit(1);
+    }
 }
 
 async function main() {
-  // Parse command line arguments
-  const args = process.argv.slice(2);
-  
-  if (args.includes('-h') || args.includes('--help')) {
-    console.log(HELP_TEXT);
-    return;
-  }
-
-  if (args.includes('-v') || args.includes('--version')) {
-    console.log(chalk.bold.cyan(`fix-peer-deps v${VERSION}`));
-    return;
-  }
-
-  const autoFixMode = args.includes('--fix');
-
-  console.log(chalk.bold.cyan('\n🔍 Fix Peer Dependencies Tool\n'));
-  
-  try {
-    const packageManager = await getPackageManager();
-    log.info(`Detected package manager: ${chalk.bold(packageManager)}`);
-
-    const issues = await analyzePeerDependencies(packageManager);
-
-    if (autoFixMode) {
-      await autoFix(issues, packageManager);
-    } else {
-      await suggestFixes(issues, packageManager);
-
-      if (issues.length === 0) {
-        log.success('All peer dependencies are properly configured! 🎉');
-      } else {
-        log.warning(`Found ${issues.length} issues that need attention`);
-        log.info(`Run with ${chalk.yellow('--fix')} to automatically fix these issues`);
-      }
+    // Parse command line arguments
+    const args = process.argv.slice(2);
+    
+    if (args.includes('-h') || args.includes('--help')) {
+        console.log(HELP_TEXT);
+        return;
     }
-  } catch (err) {
-    log.error('An error occurred:');
-    console.error(chalk.red(err.message));
-    process.exit(1);
-  }
+
+    if (args.includes('-v') || args.includes('--version')) {
+        console.log(chalk.bold.cyan(`fix-peer-deps v${VERSION}`));
+        return;
+    }
+
+    const autoFixMode = args.includes('--fix');
+    
+    console.log(chalk.bold('\n🔍 Fix Peer Dependencies Tool\n'));
+    
+    const { issues, packageManager } = await analyzePeerDependencies();
+    
+    if (autoFixMode) {
+        await autoFix(issues, packageManager);
+        return;
+    }
+    
+    if (issues.length === 0) {
+        console.log(chalk.green('✨ No peer dependency issues found!'));
+        return;
+    }
+    
+    // Group issues by severity
+    const critical = issues.filter(i => !i.isOptional);
+    const optional = issues.filter(i => i.isOptional);
+    
+    console.log(chalk.yellow(`\n📋 Found Issues:`));
+    console.log(chalk.yellow(`• ${critical.length} critical issues`));
+    console.log(chalk.gray(`• ${optional.length} optional issues`));
+    
+    if (critical.length > 0) {
+        console.log(chalk.red('\n🚨 Critical Issues:'));
+        critical.forEach(({ packageName, peer, required, current }) => {
+            console.log(chalk.white(`\n${packageName} requires ${peer}@${required}`));
+            console.log(chalk.gray(`Current: ${current}`));
+        });
+    }
+    
+    if (optional.length > 0) {
+        console.log(chalk.yellow('\n⚠️  Optional Issues:'));
+        optional.forEach(({ packageName, peer, required, current }) => {
+            console.log(chalk.gray(`\n${packageName} optionally requires ${peer}@${required}`));
+            console.log(chalk.gray(`Current: ${current}`));
+        });
+    }
+    
+    console.log(chalk.cyan('\n📝 Suggested Actions:'));
+    
+    if (critical.length > 0) {
+        const command = packageManager === 'yarn' ? 'yarn add' : 
+                       packageManager === 'pnpm' ? 'pnpm add' : 'npm install';
+                       
+        console.log(chalk.white('\nRun the following command to fix critical issues:'));
+        console.log(chalk.cyan(`${command} ${critical.map(i => `${i.peer}@"${i.required}"`).join(' ')}`));
+        console.log(chalk.yellow('\nOr run with --fix to automatically fix these issues:'));
+        console.log(chalk.cyan('fix-peer-deps --fix'));
+    }
+    
+    if (optional.length > 0) {
+        console.log(chalk.gray('\nOptional dependencies can be installed if needed:'));
+        console.log(chalk.gray(`These are typically development dependencies that may improve your development experience`));
+    }
 }
 
-main();
+process.on('SIGINT', () => {
+    console.log(chalk.yellow('\n\nOperation cancelled by user'));
+    process.exit(0);
+});
+
+main().catch(error => {
+    console.error(chalk.red(`\nError: ${error.message}`));
+    if (error.stderr) {
+        console.error(chalk.dim(error.stderr));
+    }
+    process.exit(1);
+});
