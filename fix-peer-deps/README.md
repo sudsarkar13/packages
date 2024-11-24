@@ -2,6 +2,9 @@
 
 A modern CLI tool to analyze and fix peer dependency issues across multiple package managers (npm, yarn, pnpm, bun).
 
+[![npm version](https://badge.fury.io/js/fix-peer-deps.svg)](https://badge.fury.io/js/fix-peer-deps)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 ## Description
 
 `fix-peer-deps` is a powerful command-line tool designed to simplify the often complex task of managing peer dependencies in JavaScript/Node.js projects. It addresses common challenges developers face when working with packages that have peer dependency requirements:
@@ -304,60 +307,6 @@ These enhancements will help:
 - Predict potential compatibility issues
 - Provide context-aware security recommendations
 - Optimize dependency trees automatically
-
-## Output Example
-
-```text
-🔍 Fix Peer Dependencies Tool
-
-📋 Found Issues:
-• 2 critical issues
-• 3 optional issues
-
-🚨 Critical Issues:
-react requires react-dom@^18.2.0
-Current: missing
-
-⚠️ Optional Issues:
-typescript-eslint requires @types/node@*
-Current: missing
-
-📝 Suggested Actions:
-
-Run the following command to fix critical issues:
-yarn add react-dom@"^18.2.0"
-
-Or run with --fix to automatically fix these issues:
-fix-peer-deps --fix
-
-Optional dependencies can be installed if needed:
-These are typically development dependencies that may improve your development experience
-```
-
-## Changelog
-
-### Version 1.1.1 (Latest)
-
-- 🔨 Fixed reserved word usage in strict mode for better ES module compatibility
-- 🎨 Enhanced documentation formatting and readability
-- 🔄 Internal code improvements and optimizations
-- ⚡️ Better error handling in package analysis
-
-### Version 1.1.0 (Deprecated)
-
-⚠️ This version is deprecated due to strict mode compatibility issues. Please upgrade to version 1.1.1 or later.
-
-- ✨ Added support for multiple package managers (npm, pnpm, Bun)
-- 🎨 Enhanced terminal interface with colors and emojis
-- 📊 Added progress bars and loading indicators
-- 🔄 Updated dependencies:
-  - execa: 9.5.1
-  - ora: 8.1.1
-  - Added chalk: 5.3.0
-  - Added cli-progress: 3.12.0
-- 🔍 Improved package manager detection
-- 💡 Better suggestion formatting
-- 🐛 Various bug fixes and improvements
 
 ## Requirements
 
