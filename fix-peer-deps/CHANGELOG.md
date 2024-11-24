@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.3] - 2024-02-14
+## [1.1.3] - 2024-02-14 [DEPRECATED]
 
 ### Added
 
@@ -19,7 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved error handling in examples
 - Enhanced output formatting
 
-## [1.1.2] - 2024-02-14
+### Deprecated
+
+- This version has been deprecated due to repository migration and improvements
+- Repository URL updated from starter-apps to packages
+
+## [1.1.2] - 2024-02-14 [DEPRECATED]
 
 ### Added
 
@@ -33,7 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced package.json configuration for npm publication
 - Updated file permissions for CLI execution
 
-## [1.1.1] - 2024-02-14
+### Deprecated
+
+- This version has been deprecated due to repository migration and improvements
+- Repository URL updated from starter-apps to packages
+
+## [1.1.1] - 2024-02-14 [DEPRECATED]
 
 ### Added
 
@@ -54,7 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved error handling for npm's output
 - Better handling of optional peer dependencies
 
-## [1.1.0] - 2024-02-13
+### Deprecated
+
+- This version has been deprecated due to repository migration and improvements
+- Repository URL updated from starter-apps to packages
+
+## [1.1.0] - 2024-02-13 [DEPRECATED]
 
 ### Added
 
@@ -69,7 +84,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Better error messages and suggestions
 - Updated documentation
 
-## [1.0.0] - 2024-02-12
+### Deprecated
+
+- This version has been deprecated due to repository migration and improvements
+- Repository URL updated from starter-apps to packages
+
+## [1.0.0] - 2024-02-12 [DEPRECATED]
 
 ### Added
 
@@ -77,3 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Basic peer dependency analysis
 - Support for npm package manager
 - Simple command-line interface
+
+### Deprecated
+
+- This version has been deprecated due to repository migration and improvements
+- Repository URL updated from starter-apps to packages
