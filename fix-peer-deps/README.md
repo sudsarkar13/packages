@@ -165,6 +165,53 @@ The tool categorizes peer dependency issues into two types:
 - Optional peer dependencies
 - Development tool integrations
 
+## Example Output
+
+When you run `fix-peer-deps`, you'll see output similar to this:
+
+```bash
+🔍 Detecting package manager... npm
+
+📦 Analyzing dependencies...
+████████████████████████████████████ 100%
+
+📋 Found Issues:
+• 2 critical issues
+• 1 optional issue
+
+🚨 Critical Issues:
+
+react-dom requires react@^18.2.0
+Current: 17.0.2
+
+@mui/material requires react@^17.0.0 || ^18.0.0
+Current: missing
+
+⚠️  Optional Issues:
+
+@types/react optionally requires react@*
+Current: 17.0.2
+
+📝 Suggested Actions:
+Run the following commands to resolve critical issues:
+
+npm install react@18.2.0
+npm install @mui/material
+
+💡 Tips:
+• Use --fix to automatically resolve critical issues
+• Optional issues can be resolved manually if needed
+```
+
+This output shows:
+
+- Package manager detection
+- Progress of dependency analysis
+- Summary of found issues
+- Detailed breakdown of critical and optional issues
+- Specific commands to resolve problems
+- Helpful tips for using the tool
+
 ## Common Use Cases
 
 1. **Starting a New Project**:
