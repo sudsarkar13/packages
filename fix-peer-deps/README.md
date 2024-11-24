@@ -4,6 +4,7 @@ A modern CLI tool to analyze and fix peer dependency issues across multiple pack
 
 [![npm version](https://badge.fury.io/js/fix-peer-deps.svg)](https://badge.fury.io/js/fix-peer-deps)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Try on RunKit](https://badge.runkitcdn.com/fix-peer-deps.svg)](https://npm.runkit.com/fix-peer-deps)
 
 ## Description
 
@@ -41,6 +42,87 @@ The tool performs a deep analysis of your project's dependency tree by:
 - 🎨 Beautiful CLI interface with progress indicators
 - 🧪 Intelligent filtering of development-only dependencies
 - ⚡ Automatic fix mode with `--fix` option
+
+## Try it Online
+
+You can try fix-peer-deps directly in your browser using RunKit:
+
+[![Try fix-peer-deps on RunKit](https://badge.runkitcdn.com/fix-peer-deps.svg)](https://npm.runkit.com/fix-peer-deps)
+
+```javascript
+// Interactive demo of fix-peer-deps features
+import { analyzePeerDependencies, detectPackageManager, autoFix, checkDeepPeerDependencies } from 'fix-peer-deps';
+
+// Sample project with various dependency scenarios
+const project = {
+  dependencies: {
+    "react": "17.0.2",
+    "react-dom": "18.2.0",
+    "@mui/material": "5.15.5",
+    "@mui/lab": "5.0.0-alpha.161"
+  }
+};
+
+// Sample dependency info for deep checking
+const depInfo = {
+  "@mui/lab": {
+    version: "5.0.0-alpha.161",
+    peerDependencies: {
+      "@mui/material": "^5.0.0",
+      "react": "^17.0.0 || ^18.0.0"
+    }
+  }
+};
+
+// Demonstrate key features
+async function demonstrateFeatures() {
+  try {
+    // 1. Detect Package Manager
+    const packageManager = await detectPackageManager();
+    console.log('📦 Package Manager:', packageManager);
+
+    // 2. Analyze Dependencies
+    const issues = await analyzePeerDependencies();
+    console.log('\n🔍 Analysis Results:');
+    console.log('• Critical Issues:', issues.critical.length);
+    console.log('• Optional Issues:', issues.optional.length);
+
+    // 3. Check Deep Dependencies
+    const visited = new Set();
+    const deepIssues = await checkDeepPeerDependencies(
+      '@mui/lab',
+      depInfo['@mui/lab'],
+      depInfo,
+      visited
+    );
+    console.log('\n🌳 Deep Dependencies:');
+    deepIssues.forEach(issue => 
+      console.log(`• ${issue.package} → ${issue.dependency}`)
+    );
+
+    // 4. Get Auto-Fix Commands
+    const fixCommands = await autoFix();
+    console.log('\n🛠️  Suggested Fixes:');
+    fixCommands.forEach(cmd => console.log('•', cmd));
+  } catch (error) {
+    console.error('❌ Error:', error.message);
+  }
+}
+
+demonstrateFeatures();
+```
+
+The example above demonstrates:
+
+- Package manager detection (npm, yarn, pnpm, bun)
+- Dependency analysis with version conflict detection
+- Deep peer dependency checking
+- Missing peer dependency identification
+- Optional dependency suggestions
+- Auto-fix command generation
+- Error handling and formatted output
+
+Try it yourself by clicking the RunKit badge above!
 
 ## Installation
 
