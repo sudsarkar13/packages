@@ -143,8 +143,9 @@ To fix, run:
 - 💡 Better suggestion formatting
 - 🐛 Various bug fixes and improvements
 
-### Version 1.0.12
+### Version 1.0.12 (Deprecated)
 
+- ⚠️ This version is deprecated. Please use version 1.1.0 or later
 - Initial public release
 - Basic Yarn support
 - Peer dependency analysis
