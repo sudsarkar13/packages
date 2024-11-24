@@ -8,7 +8,8 @@ import semver from 'semver';
 import { readFile } from 'fs/promises';
 import { resolve } from 'path';
 
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';  // Match with package.json
+
 const IGNORE_PATTERNS = [
     /^@types\//,  // Ignore TypeScript type definitions
     /^@babel\//,  // Ignore Babel plugins
@@ -80,36 +81,106 @@ async function detectPackageManager() {
 }
 
 async function getDependencies(packageManager) {
+    const spinner = ora('Reading package information...').start();
+    
     try {
-        let cmd, args;
-        switch (packageManager) {
-            case 'yarn':
-                cmd = 'yarn';
-                args = ['list', '--json', '--depth=0'];
-                break;
-            case 'pnpm':
-                cmd = 'pnpm';
-                args = ['list', '--json', '--depth=0'];
-                break;
-            default: // npm and others
-                cmd = 'npm';
-                args = ['list', '--json', '--depth=0'];
-        }
-
-        const { stdout } = await execa(cmd, args);
-        return JSON.parse(stdout);
-    } catch (error) {
-        // Handle case where the command fails but returns valid JSON
-        if (error.stdout) {
+        // Read package.json first
+        const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
+        const dependencies = packageJson.dependencies || {};
+        
+        // Try to get installed versions from package-lock.json or npm list
+        let installedVersions = {};
+        try {
+            const packageLock = JSON.parse(await readFile('package-lock.json', 'utf8'));
+            installedVersions = packageLock.dependencies || {};
+        } catch (e) {
             try {
-                return JSON.parse(error.stdout);
-            } catch {
-                // If parsing fails, throw the original error
-                throw error;
+                const { stdout } = await execa('npm', ['list', '--json', '--all']);
+                const npmList = JSON.parse(stdout);
+                installedVersions = npmList.dependencies || {};
+            } catch (listError) {
+                // If npm list fails, we'll use the versions from package.json
+                spinner.warn('Using versions from package.json');
             }
         }
+        
+        // Convert to our internal format
+        const result = {};
+        for (const [name, version] of Object.entries(dependencies)) {
+            result[name] = {
+                version: version.replace(/^\^|~/, ''),
+                name,
+                peerDependencies: {}
+            };
+            
+            // Try to get peer dependencies
+            try {
+                const { stdout } = await execa('npm', ['view', `${name}@${version}`, 'peerDependencies', '--json']);
+                result[name].peerDependencies = JSON.parse(stdout);
+            } catch (e) {
+                // If we can't get peer dependencies, continue without them
+            }
+        }
+        
+        spinner.succeed('Package information loaded');
+        return { dependencies: result };
+    } catch (error) {
+        spinner.fail('Failed to read package information');
         throw error;
     }
+}
+
+async function checkDeepPeerDependencies(name, info, dependencies, visited = new Set()) {
+    if (visited.has(name)) return [];
+    visited.add(name);
+    
+    const issues = [];
+    
+    // Check direct peer dependencies
+    if (info.peerDependencies) {
+        for (const [peer, version] of Object.entries(info.peerDependencies)) {
+            if (IGNORE_PATTERNS.some(pattern => pattern.test(peer))) continue;
+            
+            const isOptional = OPTIONAL_DEPS.includes(peer);
+            const peerInfo = dependencies[peer];
+            
+            if (!peerInfo) {
+                issues.push({
+                    packageName: name,
+                    peer,
+                    required: version,
+                    current: 'missing',
+                    isOptional,
+                    type: 'missing'
+                });
+            } else {
+                // Check version compatibility
+                const currentVersion = peerInfo.version;
+                const hasIntersection = semver.intersects(currentVersion, version);
+                const satisfies = semver.satisfies(currentVersion, version);
+                
+                if (!satisfies) {
+                    issues.push({
+                        packageName: name,
+                        peer,
+                        required: version,
+                        current: currentVersion,
+                        isOptional,
+                        type: hasIntersection ? 'warning' : 'error',
+                        detail: hasIntersection ? 
+                            'Versions intersect but don\'t fully satisfy requirements' :
+                            'No compatible versions found'
+                    });
+                }
+                
+                // Recursively check peer dependencies
+                const deepIssues = await checkDeepPeerDependencies(peer, peerInfo, dependencies, visited);
+                issues.push(...deepIssues);
+            }
+        }
+    }
+    
+    return issues;
 }
 
 async function analyzePeerDependencies() {
@@ -127,33 +198,23 @@ async function analyzePeerDependencies() {
         progress.start(Object.keys(dependencies).length, 0);
         
         for (const [name, info] of Object.entries(dependencies)) {
-            if (info.peerDependencies) {
-                for (const [peer, version] of Object.entries(info.peerDependencies)) {
-                    // Skip if matches ignore patterns
-                    if (IGNORE_PATTERNS.some(pattern => pattern.test(peer))) continue;
-                    
-                    // Mark as optional if in OPTIONAL_DEPS
-                    const isOptional = OPTIONAL_DEPS.includes(peer);
-                    
-                    const peerInfo = dependencies[peer];
-                    if (!peerInfo || !semver.satisfies(peerInfo.version, version)) {
-                        issues.push({
-                            packageName: name,
-                            peer,
-                            required: version,
-                            current: peerInfo?.version || 'missing',
-                            isOptional
-                        });
-                    }
-                }
-            }
+            const deepIssues = await checkDeepPeerDependencies(name, info, dependencies);
+            issues.push(...deepIssues);
             progress.increment();
         }
         
         progress.stop();
         spinner.succeed('Analysis complete');
         
-        return { issues, packageManager };
+        // Group and deduplicate issues
+        const uniqueIssues = Array.from(new Set(issues.map(JSON.stringify))).map(JSON.parse);
+        const groupedIssues = {
+            errors: uniqueIssues.filter(i => !i.isOptional && i.type === 'error'),
+            warnings: uniqueIssues.filter(i => !i.isOptional && i.type === 'warning'),
+            optional: uniqueIssues.filter(i => i.isOptional)
+        };
+        
+        return { issues: groupedIssues, packageManager };
     } catch (error) {
         spinner.fail('Analysis failed');
         console.error(chalk.red(`\nError: ${error.message}`));
@@ -167,16 +228,8 @@ async function analyzePeerDependencies() {
 async function autoFix(issues, packageManager) {
     console.log(chalk.bold('\n🔧 Automatic Fix Mode\n'));
     
-    if (issues.length === 0) {
+    if (issues.errors.length === 0 && issues.warnings.length === 0) {
         console.log(chalk.green('✨ No issues to fix!'));
-        return;
-    }
-
-    const critical = issues.filter(i => !i.isOptional);
-    const optional = issues.filter(i => i.isOptional);
-    
-    if (critical.length === 0) {
-        console.log(chalk.yellow('ℹ️  Only optional dependencies found. No critical fixes needed.'));
         return;
     }
 
@@ -186,7 +239,7 @@ async function autoFix(issues, packageManager) {
     const spinner = ora('Installing missing dependencies...').start();
     
     try {
-        const depsToInstall = critical.map(i => `${i.peer}@"${i.required}"`);
+        const depsToInstall = issues.errors.map(i => `${i.peer}@"${i.required}"`);
         
         // Split installation into chunks to avoid command line length limits
         const chunkSize = 10;
@@ -205,7 +258,7 @@ async function autoFix(issues, packageManager) {
         
         console.log(chalk.green('\n✨ Fixed all critical peer dependency issues!'));
         
-        if (optional.length > 0) {
+        if (issues.optional.length > 0) {
             console.log(chalk.yellow('\nℹ️  Note: Some optional dependencies were skipped.'));
             console.log(chalk.gray('These are typically development dependencies that may improve your development experience.'));
         }
@@ -217,6 +270,64 @@ async function autoFix(issues, packageManager) {
         }
         process.exit(1);
     }
+}
+
+function formatDependencyTree(issues) {
+    const tree = {};
+    
+    // Build dependency tree
+    issues.forEach(({ packageName, peer, required, current, type, detail }) => {
+        if (!tree[packageName]) {
+            tree[packageName] = { deps: [], type: type };
+        }
+        tree[packageName].deps.push({ peer, required, current, detail });
+    });
+    
+    // Format tree output
+    let output = '';
+    for (const [pkg, info] of Object.entries(tree)) {
+        const icon = info.type === 'error' ? '❌' : info.type === 'warning' ? '⚠️' : '📦';
+        output += `${icon} ${chalk.bold(pkg)}\n`;
+        info.deps.forEach(({ peer, required, current, detail }) => {
+            output += `  ├─ ${chalk.cyan(peer)}\n`;
+            output += `  │  Required: ${chalk.yellow(required)}\n`;
+            output += `  │  Current:  ${current === 'missing' ? chalk.red(current) : chalk.gray(current)}\n`;
+            if (detail) {
+                output += `  │  Note:     ${chalk.dim(detail)}\n`;
+            }
+            output += `  │\n`;
+        });
+    }
+    return output;
+}
+
+function formatSuggestedActions(issues, packageManager) {
+    const command = packageManager === 'yarn' ? 'yarn add' : 
+                   packageManager === 'pnpm' ? 'pnpm add' : 'npm install';
+    
+    let output = '';
+    const depsByVersion = {};
+    
+    // Group by required versions
+    issues.forEach(({ peer, required }) => {
+        if (!depsByVersion[required]) {
+            depsByVersion[required] = new Set();
+        }
+        depsByVersion[required].add(peer);
+    });
+    
+    // Format commands
+    Object.entries(depsByVersion).forEach(([version, peers]) => {
+        const packages = Array.from(peers);
+        if (packages.length === 1) {
+            output += `${command} ${packages[0]}@"${version}"\n`;
+        } else {
+            output += `# Install compatible version for multiple packages\n`;
+            output += `${command} ${packages.map(p => `${p}@"${version}"`).join(' ')}\n`;
+        }
+    });
+    
+    return output;
 }
 
 async function main() {
@@ -244,51 +355,65 @@ async function main() {
         return;
     }
     
-    if (issues.length === 0) {
-        console.log(chalk.green('✨ No peer dependency issues found!'));
+    if (issues.errors.length === 0 && issues.warnings.length === 0 && issues.optional.length === 0) {
+        console.log(chalk.green('\n✨ No peer dependency issues found!'));
         return;
     }
-    
-    // Group issues by severity
-    const critical = issues.filter(i => !i.isOptional);
-    const optional = issues.filter(i => i.isOptional);
-    
-    console.log(chalk.yellow(`\n📋 Found Issues:`));
-    console.log(chalk.yellow(`• ${critical.length} critical issues`));
-    console.log(chalk.gray(`• ${optional.length} optional issues`));
-    
-    if (critical.length > 0) {
-        console.log(chalk.red('\n🚨 Critical Issues:'));
-        critical.forEach(({ packageName, peer, required, current }) => {
-            console.log(chalk.white(`\n${packageName} requires ${peer}@${required}`));
-            console.log(chalk.gray(`Current: ${current}`));
-        });
+
+    // Summary
+    console.log(chalk.bold('\n📊 Dependency Analysis Summary'));
+    console.log('─'.repeat(50));
+    console.log(`${chalk.red('Critical Issues:')}    ${issues.errors.length}`);
+    console.log(`${chalk.yellow('Version Warnings:')} ${issues.warnings.length}`);
+    console.log(`${chalk.blue('Optional Issues:')}   ${issues.optional.length}`);
+    console.log('─'.repeat(50));
+
+    // Critical Issues
+    if (issues.errors.length > 0) {
+        console.log(chalk.red('\n🚨 Critical Issues'));
+        console.log('═'.repeat(50));
+        console.log(formatDependencyTree(issues.errors));
     }
-    
-    if (optional.length > 0) {
-        console.log(chalk.yellow('\n⚠️  Optional Issues:'));
-        optional.forEach(({ packageName, peer, required, current }) => {
-            console.log(chalk.gray(`\n${packageName} optionally requires ${peer}@${required}`));
-            console.log(chalk.gray(`Current: ${current}`));
-        });
+
+    // Warnings
+    if (issues.warnings.length > 0) {
+        console.log(chalk.yellow('\n⚠️  Version Warnings'));
+        console.log('═'.repeat(50));
+        console.log(formatDependencyTree(issues.warnings));
     }
-    
-    console.log(chalk.cyan('\n📝 Suggested Actions:'));
-    
-    if (critical.length > 0) {
-        const command = packageManager === 'yarn' ? 'yarn add' : 
-                       packageManager === 'pnpm' ? 'pnpm add' : 'npm install';
-                       
-        console.log(chalk.white('\nRun the following command to fix critical issues:'));
-        console.log(chalk.cyan(`${command} ${critical.map(i => `${i.peer}@"${i.required}"`).join(' ')}`));
-        console.log(chalk.yellow('\nOr run with --fix to automatically fix these issues:'));
+
+    // Optional Issues
+    if (issues.optional.length > 0) {
+        console.log(chalk.blue('\n💡 Optional Improvements'));
+        console.log('═'.repeat(50));
+        console.log(formatDependencyTree(issues.optional));
+    }
+
+    // Suggested Actions
+    if (issues.errors.length > 0 || issues.warnings.length > 0) {
+        console.log(chalk.cyan('\n📝 Suggested Actions'));
+        console.log('═'.repeat(50));
+        
+        if (issues.errors.length > 0) {
+            console.log(chalk.bold('\nCritical Fixes:'));
+            console.log(chalk.white(formatSuggestedActions(issues.errors, packageManager)));
+        }
+        
+        if (issues.warnings.length > 0) {
+            console.log(chalk.bold('\nRecommended Updates:'));
+            console.log(chalk.gray(formatSuggestedActions(issues.warnings, packageManager)));
+        }
+        
+        console.log(chalk.yellow('\n💡 Quick Fix:'));
         console.log(chalk.cyan('fix-peer-deps --fix'));
     }
-    
-    if (optional.length > 0) {
-        console.log(chalk.gray('\nOptional dependencies can be installed if needed:'));
-        console.log(chalk.gray(`These are typically development dependencies that may improve your development experience`));
-    }
+
+    // Tips
+    console.log(chalk.magenta('\n💭 Tips'));
+    console.log('═'.repeat(50));
+    console.log('• Use --fix to automatically resolve critical issues');
+    console.log('• Optional dependencies can improve development experience');
+    console.log('• Check package documentation for compatibility details');
 }
 
 process.on('SIGINT', () => {
