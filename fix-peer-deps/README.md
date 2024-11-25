@@ -51,7 +51,7 @@ You can try fix-peer-deps directly in your browser using RunKit:
 
 ```javascript
 // Interactive demo of fix-peer-deps features
-import { analyzePeerDependencies, detectPackageManager, autoFix, checkDeepPeerDependencies } from 'fix-peer-deps';
+const { analyzePeerDependencies, detectPackageManager, autoFix, checkDeepPeerDependencies } = require('fix-peer-deps');
 
 // Sample project with various dependency scenarios
 const project = {
