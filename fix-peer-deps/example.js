@@ -1,9 +1,9 @@
 // Welcome to fix-peer-deps interactive demo!
 // This example demonstrates all major features of the package.
 
-import { analyzePeerDependencies, detectPackageManager, autoFix, checkDeepPeerDependencies } from 'fix-peer-deps';
-import fs from 'fs/promises';
-import chalk from 'chalk';
+const { analyzePeerDependencies, detectPackageManager, autoFix, checkDeepPeerDependencies } = require('fix-peer-deps');
+const fs = require('fs').promises;
+const chalk = require('chalk');
 
 // Sample projects demonstrating different scenarios
 const projects = {
