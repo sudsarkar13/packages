@@ -45,7 +45,6 @@ ${chalk.bold('VERSION')}
 
 async function detectPackageManager() {
     const spinner = ora('Detecting package manager...').start();
-    const files = ['yarn.lock', 'package-lock.json', 'pnpm-lock.yaml', 'bun.lockb'];
     
     try {
         // First check if we're in a Node.js project
@@ -55,27 +54,55 @@ async function detectPackageManager() {
         // Check packageManager field first
         if (packageJson.packageManager) {
             const [name] = packageJson.packageManager.split('@');
-            spinner.succeed(`Detected package manager from package.json: ${name}`);
-            return name;
+            // Verify the package manager is installed
+            try {
+                await execa(name, ['--version']);
+                spinner.succeed(`Detected package manager from package.json: ${name}`);
+                return name;
+            } catch {
+                spinner.warn(`${name} specified in package.json but not found in PATH`);
+            }
         }
 
-        // Then check for lock files
-        for (const file of files) {
+        // Check for lock files and verify package manager installation
+        const lockFileMap = {
+            'yarn.lock': 'yarn',
+            'package-lock.json': 'npm',
+            'pnpm-lock.yaml': 'pnpm',
+            'bun.lockb': 'bun'
+        };
+
+        const foundManagers = [];
+        for (const [file, manager] of Object.entries(lockFileMap)) {
             try {
                 await readFile(resolve(process.cwd(), file));
-                const name = file.split('.')[0];
-                spinner.succeed(`Detected package manager from lock file: ${name}`);
-                return name;
+                try {
+                    await execa(manager, ['--version']);
+                    foundManagers.push(manager);
+                } catch {}
             } catch {}
         }
+
+        if (foundManagers.length > 0) {
+            if (foundManagers.length > 1) {
+                spinner.warn(`Multiple package managers detected: ${foundManagers.join(', ')}`);
+            }
+            spinner.succeed(`Using package manager: ${foundManagers[0]}`);
+            return foundManagers[0];
+        }
         
-        // Default to npm if no specific manager is detected
-        spinner.succeed('No specific package manager detected, using npm');
-        return 'npm';
+        // Verify npm is available as fallback
+        try {
+            await execa('npm', ['--version']);
+            spinner.succeed('No specific package manager detected, using npm');
+            return 'npm';
+        } catch {
+            throw new Error('No supported package manager found');
+        }
     } catch (error) {
-        spinner.fail('No package.json found in current directory');
-        console.error(chalk.red('\nError: This command must be run in a Node.js project directory'));
-        console.error(chalk.dim('Make sure you are in a directory with a package.json file'));
+        spinner.fail(error.message);
+        console.error(chalk.red('\nError: Unable to determine package manager'));
+        console.error(chalk.dim('Make sure you have a package manager installed (npm, yarn, pnpm, or bun)'));
         process.exit(1);
     }
 }
@@ -233,30 +260,84 @@ async function autoFix(issues, packageManager) {
         return;
     }
 
-    const command = packageManager === 'yarn' ? 'yarn add' : 
-                   packageManager === 'pnpm' ? 'pnpm add' : 'npm install';
-    
     const spinner = ora('Installing missing dependencies...').start();
     
     try {
         const depsToInstall = issues.errors.map(i => `${i.peer}@"${i.required}"`);
         
+        // Package manager specific install commands
+        const commands = {
+            npm: {
+                cmd: 'npm',
+                args: ['install', '--save-peer'],
+                verify: ['npm', 'ls', '--json']
+            },
+            yarn: {
+                cmd: 'yarn',
+                args: ['add'],
+                verify: ['yarn', 'list', '--json']
+            },
+            pnpm: {
+                cmd: 'pnpm',
+                args: ['add', '-P'],
+                verify: ['pnpm', 'ls', '--json']
+            },
+            bun: {
+                cmd: 'bun',
+                args: ['add'],
+                verify: ['bun', 'pm', 'ls', '--json']
+            }
+        };
+
+        const command = commands[packageManager];
+        if (!command) {
+            throw new Error(`Unsupported package manager: ${packageManager}`);
+        }
+
         // Split installation into chunks to avoid command line length limits
         const chunkSize = 10;
+        const installedDeps = new Set();
+        
         for (let i = 0; i < depsToInstall.length; i += chunkSize) {
             const chunk = depsToInstall.slice(i, i + chunkSize);
             spinner.text = `Installing dependencies (${i + 1}-${Math.min(i + chunkSize, depsToInstall.length)} of ${depsToInstall.length})...`;
-            await execa(command.split(' ')[0], [...command.split(' ').slice(1), ...chunk]);
+            
+            try {
+                await execa(command.cmd, [...command.args, ...chunk]);
+                chunk.forEach(dep => installedDeps.add(dep.split('@')[0]));
+            } catch (error) {
+                spinner.warn(`Failed to install chunk ${i + 1}-${Math.min(i + chunkSize, depsToInstall.length)}`);
+                console.error(chalk.yellow(`\nWarning: ${error.message}`));
+                if (error.stderr) {
+                    console.error(chalk.dim(error.stderr));
+                }
+            }
         }
         
-        spinner.succeed('Successfully installed missing dependencies');
-        
-        // Run package manager's install command to ensure everything is properly linked
+        // Verify installations
+        spinner.start('Verifying installations...');
+        try {
+            const { stdout } = await execa(...command.verify);
+            const deps = JSON.parse(stdout).dependencies || {};
+            const missingDeps = Array.from(installedDeps).filter(dep => !deps[dep]);
+            
+            if (missingDeps.length > 0) {
+                spinner.warn('Some dependencies were not installed correctly');
+                console.log(chalk.yellow('\nThe following dependencies may need manual installation:'));
+                missingDeps.forEach(dep => console.log(chalk.dim(`- ${dep}`)));
+            } else {
+                spinner.succeed('All dependencies installed successfully');
+            }
+        } catch (error) {
+            spinner.warn('Unable to verify installations');
+        }
+
+        // Run final install to ensure everything is properly linked
         spinner.start('Updating dependencies...');
         await execa(packageManager, ['install']);
         spinner.succeed('Dependencies updated successfully');
         
-        console.log(chalk.green('\n✨ Fixed all critical peer dependency issues!'));
+        console.log(chalk.green('\n✨ Fixed peer dependency issues!'));
         
         if (issues.optional.length > 0) {
             console.log(chalk.yellow('\nℹ️  Note: Some optional dependencies were skipped.'));
