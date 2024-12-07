@@ -5,7 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.5] - 2024-02-14
+## [1.1.6.01-beta] - 2024-12-07
+
+### Added
+
+- Enhanced package manager detection with verification
+- Added support for multiple package manager installations
+- Added installation verification step for dependencies
+
+### Changed
+
+- Improved error handling and recovery for failed installations
+- Enhanced package manager-specific command handling
+- Added proper peer dependency flags for npm (--save-peer) and pnpm (-P)
+- Better progress indication and detailed logging
+- Improved handling of partial installation failures
+
+### Fixed
+
+- Fixed package manager detection when multiple lock files exist
+- Fixed auto-fix functionality across npm, yarn, pnpm, and bun
+- Fixed dependency verification after installation
+
+## [1.1.5] - 2024-11-25
 
 ### Changed
 
@@ -13,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved RunKit compatibility
 - Fixed documentation for better RunKit integration
 
-## [1.1.4] - 2024-02-14
+## [1.1.4] - 2024-11-25
 
 ### Changed
 
@@ -21,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved documentation formatting
 - Fixed version synchronization across files
 
-## [1.1.3] - 2024-02-14 [DEPRECATED]
+## [1.1.3] - 2024-11-24 [DEPRECATED]
 
 ### Added
 
