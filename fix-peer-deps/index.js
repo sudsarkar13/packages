@@ -8,7 +8,7 @@ import semver from 'semver';
 import { readFile, readdir } from 'fs/promises';
 import { resolve, join } from 'path';
 
-const VERSION = '1.1.11';  // Match with package.json
+const VERSION = '1.1.12';  // Match with package.json
 
 const IGNORE_PATTERNS = [
     /^@types\//,  // Ignore TypeScript type definitions
@@ -101,44 +101,43 @@ async function getDependencies(packageManager) {
         const packageJson = JSON.parse(
             await readFile(resolve(process.cwd(), 'package.json'), 'utf8')
         );
-        
-        // For Yarn, use alternative methods to get dependency information
-        if (packageManager === 'yarn') {
-            try {
-                // Get all dependencies from package.json
-                const allDeps = {
-                    ...packageJson.dependencies,
-                    ...packageJson.devDependencies,
-                    ...packageJson.peerDependencies
-                };
 
-                // Use yarn info for each package to get peer dependencies
-                for (const [name, version] of Object.entries(allDeps)) {
+        const result = {
+            dependencies: {},
+            devDependencies: {},
+            peerDependencies: {}
+        };
+
+        // Helper to process dependencies
+        const processDeps = async (deps, type) => {
+            if (!deps) return;
+            for (const [name, version] of Object.entries(deps)) {
+                result[type][name] = { version: version.replace(/^\^|~/, '') };
+                
+                if (packageManager === 'yarn') {
                     try {
-                        const { stdout } = await execa('yarn', ['info', name, '--json']);
+                        const { stdout } = await execa('yarn', ['info', name, 'peerDependencies', '--json']);
                         const info = JSON.parse(stdout);
-                        
-                        if (info.data && info.data.peerDependencies) {
-                            if (!packageJson.dependencies) packageJson.dependencies = {};
-                            packageJson.dependencies[name] = {
-                                version: version.replace(/^\^|~/, ''),
-                                peerDependencies: info.data.peerDependencies
-                            };
+                        if (info.data) {
+                            result[type][name].peerDependencies = info.data;
                         }
-                    } catch (pkgError) {
-                        console.debug(`Error getting info for ${name}:`, pkgError.message);
+                    } catch (error) {
+                        console.debug(`Error getting peer dependencies for ${name}:`, error.message);
                     }
                 }
-            } catch (error) {
-                console.debug('Error reading Yarn information:', error.message);
             }
-        }
+        };
+
+        // Process all dependency types
+        await processDeps(packageJson.dependencies, 'dependencies');
+        await processDeps(packageJson.devDependencies, 'devDependencies');
+        await processDeps(packageJson.peerDependencies, 'peerDependencies');
         
         spinner.succeed('Package information loaded');
-        return packageJson;
+        return result;
     } catch (error) {
-        spinner.fail('Failed to read package.json');
-        throw new Error('Could not read package.json: ' + error.message);
+        spinner.fail('Failed to read package information');
+        throw error;
     }
 }
 
@@ -148,36 +147,52 @@ async function analyzePeerDependencies(dependencies, onProgress) {
     try {
         const missingDeps = new Set();
         const versionConflicts = new Set();
-        const allDeps = dependencies.dependencies || {};
-        let total = Object.keys(allDeps).length;
+        let total = 0;
         let current = 0;
 
-        for (const [name, info] of Object.entries(allDeps)) {
-            if (onProgress) {
-                onProgress(++current, total);
-            }
+        // Count total packages to analyze
+        Object.values(dependencies).forEach(depType => {
+            total += Object.keys(depType).length;
+        });
 
-            if (typeof info === 'string') {
-                // Skip if it's just a version string
-                continue;
+        // Helper to check version compatibility
+        const checkVersion = (name, required, installed) => {
+            try {
+                const cleanInstalled = semver.clean(installed) || installed;
+                return semver.satisfies(cleanInstalled, required);
+            } catch (error) {
+                console.debug(`Error checking version for ${name}:`, error.message);
+                return false;
             }
+        };
 
-            const { version, peerDependencies } = info;
-            if (peerDependencies) {
-                for (const [peerName, requiredVersion] of Object.entries(peerDependencies)) {
-                    const installedVersion = findInstalledVersion(peerName, dependencies);
-                    
-                    if (!installedVersion) {
-                        missingDeps.add(`${peerName}@${requiredVersion}`);
-                    } else {
-                        try {
-                            if (!semver.satisfies(semver.clean(installedVersion) || installedVersion, requiredVersion)) {
-                                versionConflicts.add(
-                                    `${name} requires ${peerName}@${requiredVersion}, but ${installedVersion} is installed`
-                                );
-                            }
-                        } catch (error) {
-                            console.debug(`Error checking version for ${peerName}:`, error.message);
+        // Helper to find installed version across all dependency types
+        const findInstalledVersion = (name) => {
+            for (const depType of Object.values(dependencies)) {
+                if (depType[name]) {
+                    return depType[name].version;
+                }
+            }
+            return null;
+        };
+
+        // Analyze all dependency types
+        for (const [depType, deps] of Object.entries(dependencies)) {
+            for (const [name, info] of Object.entries(deps)) {
+                if (onProgress) {
+                    onProgress(++current, total);
+                }
+
+                if (info.peerDependencies) {
+                    for (const [peerName, requiredVersion] of Object.entries(info.peerDependencies)) {
+                        const installedVersion = findInstalledVersion(peerName);
+                        
+                        if (!installedVersion) {
+                            missingDeps.add(`${peerName}@${requiredVersion}`);
+                        } else if (!checkVersion(peerName, requiredVersion, installedVersion)) {
+                            versionConflicts.add(
+                                `${name} requires ${peerName}@${requiredVersion}, but ${installedVersion} is installed`
+                            );
                         }
                     }
                 }
@@ -208,21 +223,6 @@ async function analyzePeerDependencies(dependencies, onProgress) {
         spinner.fail('Analysis failed');
         throw error;
     }
-}
-
-function findInstalledVersion(packageName, dependencies) {
-    const allDeps = {
-        ...dependencies.dependencies,
-        ...dependencies.devDependencies,
-        ...dependencies.peerDependencies
-    };
-
-    if (allDeps[packageName]) {
-        return typeof allDeps[packageName] === 'string' 
-            ? allDeps[packageName].replace(/^\^|~/, '')
-            : allDeps[packageName].version;
-    }
-    return null;
 }
 
 async function analyzeDependencies(packageJson) {
