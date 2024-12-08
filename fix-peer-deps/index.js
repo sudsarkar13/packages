@@ -8,7 +8,7 @@ import semver from 'semver';
 import { readFile, readdir } from 'fs/promises';
 import { resolve, join } from 'path';
 
-const VERSION = '1.1.9';  // Match with package.json
+const VERSION = '1.1.10';  // Match with package.json
 
 const IGNORE_PATTERNS = [
     /^@types\//,  // Ignore TypeScript type definitions
@@ -102,6 +102,39 @@ async function getDependencies(packageManager) {
             await readFile(resolve(process.cwd(), 'package.json'), 'utf8')
         );
         
+        // For Yarn, also check yarn.lock for more accurate dependency information
+        if (packageManager === 'yarn') {
+            try {
+                const yarnLockPath = resolve(process.cwd(), 'yarn.lock');
+                await readFile(yarnLockPath, 'utf8');
+                
+                // Use yarn why to get detailed dependency information
+                const { stdout } = await execa('yarn', ['why', '--json']);
+                const yarnInfo = JSON.parse(stdout);
+                
+                // Merge yarn information with package.json
+                if (yarnInfo && Array.isArray(yarnInfo)) {
+                    yarnInfo.forEach(dep => {
+                        if (dep.name && dep.children) {
+                            const peers = dep.children.filter(child => child.type === 'peerDependencies');
+                            if (peers.length > 0) {
+                                if (!packageJson.dependencies) packageJson.dependencies = {};
+                                packageJson.dependencies[dep.name] = {
+                                    version: dep.version,
+                                    peerDependencies: peers.reduce((acc, peer) => {
+                                        acc[peer.name] = peer.range;
+                                        return acc;
+                                    }, {})
+                                };
+                            }
+                        }
+                    });
+                }
+            } catch (error) {
+                console.debug('Error reading Yarn information:', error.message);
+            }
+        }
+        
         spinner.succeed('Package information loaded');
         return packageJson;
     } catch (error) {
@@ -189,6 +222,67 @@ async function analyzeDependencies(packageJson) {
     };
 }
 
+async function analyzePeerDependencies(dependencies, onProgress) {
+    const spinner = ora('Analyzing dependencies...').start();
+    
+    try {
+        const missingDeps = new Set();
+        const versionConflicts = new Set();
+        let total = Object.keys(dependencies).length;
+        let current = 0;
+
+        const addVersionConflict = (name, peerName, requiredVersion, installedVersion) => {
+            // Check if the installed version actually conflicts
+            try {
+                if (!semver.satisfies(semver.clean(installedVersion) || installedVersion, requiredVersion)) {
+                    versionConflicts.add(
+                        `${name} requires ${peerName}@${requiredVersion}, but ${installedVersion} is installed`
+                    );
+                }
+            } catch (error) {
+                console.debug(`Error checking version compatibility for ${peerName}: ${error.message}`);
+                // If we can't parse the version, assume it's a conflict
+                versionConflicts.add(
+                    `${name} requires ${peerName}@${requiredVersion}, but ${installedVersion} is installed (version parsing error)`
+                );
+            }
+        };
+
+        for (const [name, info] of Object.entries(dependencies)) {
+            if (onProgress) {
+                onProgress(++current, total);
+            }
+
+            if (info.peerDependencies) {
+                for (const [peerName, requiredVersion] of Object.entries(info.peerDependencies)) {
+                    const installedVersion = dependencies[peerName]?.version;
+                    
+                    if (!installedVersion) {
+                        missingDeps.add(`${peerName}@${requiredVersion}`);
+                    } else {
+                        addVersionConflict(name, peerName, requiredVersion, installedVersion);
+                    }
+                }
+            }
+        }
+
+        spinner.succeed('Analysis complete');
+
+        // Deduplicate and sort the output
+        const uniqueMissingDeps = [...new Set(missingDeps)].sort();
+        const uniqueVersionConflicts = [...new Set(versionConflicts)].sort();
+
+        return {
+            missingDeps: uniqueMissingDeps,
+            versionConflicts: uniqueVersionConflicts,
+            hasIssues: uniqueMissingDeps.length > 0 || uniqueVersionConflicts.length > 0
+        };
+    } catch (error) {
+        spinner.fail('Analysis failed');
+        throw error;
+    }
+}
+
 const PACKAGE_MANAGERS = {
     npm: {
         cmd: 'npm',
@@ -215,61 +309,6 @@ const PACKAGE_MANAGERS = {
         verifyArgs: ['pm', 'ls', '--json']
     }
 };
-
-async function analyzePeerDependencies(dependencies, onProgress) {
-    const spinner = ora('Analyzing dependencies...').start();
-    
-    try {
-        const missingDeps = new Set();
-        const versionConflicts = new Set();
-        let total = Object.keys(dependencies).length;
-        let current = 0;
-
-        for (const [name, info] of Object.entries(dependencies)) {
-            if (onProgress) {
-                onProgress(++current, total);
-            }
-
-            if (info.peerDependencies) {
-                for (const [peerName, requiredVersion] of Object.entries(info.peerDependencies)) {
-                    const installedVersion = dependencies[peerName]?.version;
-                    
-                    if (!installedVersion) {
-                        missingDeps.add(`${peerName}@${requiredVersion}`);
-                    } else if (!semver.satisfies(installedVersion, requiredVersion)) {
-                        versionConflicts.add(
-                            `${name} requires ${peerName}@${requiredVersion}, but ${installedVersion} is installed`
-                        );
-                    }
-                }
-            }
-        }
-
-        spinner.succeed('Analysis complete');
-
-        // Deduplicate and sort the output
-        const uniqueMissingDeps = [...new Set(missingDeps)].sort();
-        const uniqueVersionConflicts = [...new Set(versionConflicts)].sort();
-
-        if (uniqueMissingDeps.length > 0) {
-            console.log('\nMissing peer dependencies:');
-            uniqueMissingDeps.forEach(dep => console.log(`- ${dep}`));
-        }
-
-        if (uniqueVersionConflicts.length > 0) {
-            console.log('\nVersion conflicts:');
-            uniqueVersionConflicts.forEach(conflict => console.log(`- ${conflict}`));
-        }
-
-        return {
-            missingDeps: uniqueMissingDeps,
-            versionConflicts: uniqueVersionConflicts
-        };
-    } catch (error) {
-        spinner.fail('Analysis failed');
-        throw error;
-    }
-}
 
 async function autoFix(issues, packageManager) {
     console.log(chalk.bold('\n🔧 Automatic Fix Mode\n'));
