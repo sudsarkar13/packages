@@ -5,21 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.12] - 2024-12-08
+
+### Added
+
+- Support for direct package information retrieval in Yarn
+- Improved version range validation across dependency types
+
+### Changed
+
+- Enhanced dependency analysis for better accuracy
+- Improved progress reporting with package counts
+- Better organization of dependency processing logic
+
+### Fixed
+
+- Fixed peer dependency detection in complex projects
+- Improved version compatibility checking
+- Better error handling for package information retrieval
+
 ## [1.1.11] - 2024-12-08
 
 ### Changed
 
-- Improved Yarn dependency detection using `yarn info` command
-- Enhanced version conflict detection with better error handling
-- Simplified package manager commands configuration
-- Added support for all dependency types (dependencies, devDependencies, peerDependencies)
+- Improved dependency analysis to check all dependency types (dependencies, devDependencies, peerDependencies)
+- Enhanced Yarn integration with better peer dependency detection
+- Improved version conflict detection with more accurate version parsing
+- Better progress reporting during analysis
 
 ### Fixed
 
-- Fixed Yarn command issues by using `yarn info` instead of `yarn why`
-- Improved version parsing for non-standard version strings
-- Better handling of missing dependencies across all dependency types
-- Fixed duplicate dependency detection in analysis results
+- Fixed missing peer dependency detection in Yarn projects
+- Improved handling of version ranges and compatibility checks
+- Better error handling for package information retrieval
+- Fixed duplicate dependency analysis
 
 ## [1.1.10] - 2024-12-08
 
