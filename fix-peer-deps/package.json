@@ -4,16 +4,13 @@
   "description": "A modern CLI tool to analyze and fix peer dependency issues across multiple package managers",
   "main": "index.js",
   "type": "module",
-  "private": false,
   "preferGlobal": true,
   "scripts": {
     "fix-peer-deps": "node index.js",
     "prepublishOnly": "npm test",
     "test": "echo \"No tests specified yet\" && exit 0"
   },
-  "bin": {
-    "fix-peer-deps": "./index.js"
-  },
+  "bin": "./index.js",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sudsarkar13/packages.git"
@@ -65,5 +62,6 @@
     "CONTRIBUTING.md",
     "example.js"
   ],
-  "runkitExampleFilename": "example.js"
+  "runkitExampleFilename": "example.js",
+  "packageManager": "yarn@4.5.3"
 }
