@@ -8,7 +8,7 @@ import semver from 'semver';
 import { readFile, readdir } from 'fs/promises';
 import { resolve, join } from 'path';
 
-const VERSION = '1.1.7';  // Match with package.json
+const VERSION = '1.1.8';  // Match with package.json
 
 const IGNORE_PATTERNS = [
     /^@types\//,  // Ignore TypeScript type definitions
@@ -58,13 +58,7 @@ if (args.includes('-v') || args.includes('--version')) {
 async function detectPackageManager(cwd) {
     const files = await readdir(cwd);
     
-    // Check for lock files first
-    if (files.includes('yarn.lock')) return 'yarn';
-    if (files.includes('package-lock.json')) return 'npm';
-    if (files.includes('pnpm-lock.yaml')) return 'pnpm';
-    if (files.includes('bun.lockb')) return 'bun';
-
-    // Check for packageManager field in package.json
+    // Check for packageManager field in package.json first
     try {
         const packageJson = JSON.parse(await readFile(join(cwd, 'package.json'), 'utf8'));
         if (packageJson.packageManager) {
@@ -77,6 +71,17 @@ async function detectPackageManager(cwd) {
         console.debug('Error reading package.json:', error.message);
     }
 
+    // Check for Yarn Berry (.yarn directory)
+    if (files.includes('.yarn')) {
+        return 'yarn';
+    }
+    
+    // Check for lock files
+    if (files.includes('yarn.lock')) return 'yarn';
+    if (files.includes('package-lock.json')) return 'npm';
+    if (files.includes('pnpm-lock.yaml')) return 'pnpm';
+    if (files.includes('bun.lockb')) return 'bun';
+
     // Check environment variables
     if (process.env.npm_execpath) {
         if (process.env.npm_execpath.includes('yarn')) return 'yarn';
@@ -85,8 +90,24 @@ async function detectPackageManager(cwd) {
         return 'npm';
     }
 
-    console.debug('No specific package manager detected, using npm as default');
+    // Default to npm
     return 'npm';
+}
+
+async function getDependencies(packageManager) {
+    const spinner = ora('Reading package information...').start();
+    
+    try {
+        const packageJson = JSON.parse(
+            await readFile(resolve(process.cwd(), 'package.json'), 'utf8')
+        );
+        
+        spinner.succeed('Package information loaded');
+        return packageJson;
+    } catch (error) {
+        spinner.fail('Failed to read package.json');
+        throw new Error('Could not read package.json: ' + error.message);
+    }
 }
 
 async function analyzeDependencies(packageJson) {
@@ -168,56 +189,6 @@ async function analyzeDependencies(packageJson) {
     };
 }
 
-async function getDependencies(packageManager) {
-    const spinner = ora('Reading package information...').start();
-    
-    try {
-        // Read package.json first
-        const packageJson = JSON.parse(await readFile('package.json', 'utf8'));
-        const dependencies = packageJson.dependencies || {};
-        
-        // Try to get installed versions from package-lock.json or npm list
-        let installedVersions = {};
-        try {
-            const packageLock = JSON.parse(await readFile('package-lock.json', 'utf8'));
-            installedVersions = packageLock.dependencies || {};
-        } catch (e) {
-            try {
-                const { stdout } = await execa('npm', ['list', '--json', '--all']);
-                const npmList = JSON.parse(stdout);
-                installedVersions = npmList.dependencies || {};
-            } catch (listError) {
-                // If npm list fails, we'll use the versions from package.json
-                spinner.warn('Using versions from package.json');
-            }
-        }
-        
-        // Convert to our internal format
-        const result = {};
-        for (const [name, version] of Object.entries(dependencies)) {
-            result[name] = {
-                version: version.replace(/^\^|~/, ''),
-                name,
-                peerDependencies: {}
-            };
-            
-            // Try to get peer dependencies
-            try {
-                const { stdout } = await execa('npm', ['view', `${name}@${version}`, 'peerDependencies', '--json']);
-                result[name].peerDependencies = JSON.parse(stdout);
-            } catch (e) {
-                // If we can't get peer dependencies, continue without them
-            }
-        }
-        
-        spinner.succeed('Package information loaded');
-        return { dependencies: result };
-    } catch (error) {
-        spinner.fail('Failed to read package information');
-        throw error;
-    }
-}
-
 async function analyzePeerDependencies(dependencies, onProgress) {
     const spinner = ora('Analyzing dependencies...').start();
     
@@ -262,22 +233,32 @@ async function autoFix(issues, packageManager) {
     
     try {
         // Format the version ranges properly
-        const depsToInstall = issues.missingPeerDeps.map(i => {
-            const version = i.split('@')[1];
-            return `${i.split('@')[0]}@${version}`;
-        });
-        
+        const depsToInstall = issues.missingPeerDeps
+            .map(dep => {
+                if (typeof dep === 'string') {
+                    const [name, version] = dep.split('@');
+                    return version ? `${name}@${version}` : name;
+                }
+                return null;
+            })
+            .filter(Boolean);
+
+        if (depsToInstall.length === 0) {
+            spinner.succeed('No dependencies to install');
+            return;
+        }
+
         // Package manager specific install commands
         const commands = {
             npm: {
                 cmd: 'npm',
                 args: ['install', '--save-peer', '--legacy-peer-deps'],
                 verifyCmd: 'npm',
-                verifyArgs: ['ls', '--json']
+                verifyArgs: ['ls', '--json', '--all']
             },
             yarn: {
                 cmd: 'yarn',
-                args: ['add', '--legacy-peer-deps'],
+                args: ['add'],
                 verifyCmd: 'yarn',
                 verifyArgs: ['list', '--json']
             },
@@ -354,62 +335,44 @@ async function autoFix(issues, packageManager) {
     }
 }
 
-function formatDependencyTree(issues) {
-    const tree = {};
-    
-    // Build dependency tree
-    issues.forEach(({ packageName, peer, required, current, type, detail }) => {
-        if (!tree[packageName]) {
-            tree[packageName] = { deps: [], type: type };
+function formatDependencyTree(deps) {
+    if (!deps || deps.length === 0) return '';
+
+    let output = '\nMissing peer dependencies:\n';
+    deps.forEach(dep => {
+        if (typeof dep === 'string') {
+            output += chalk.yellow(`- ${dep}\n`);
+        } else if (dep.package && dep.peer) {
+            output += chalk.yellow(`- ${dep.package} requires ${dep.peer}@${dep.required}\n`);
+            output += chalk.gray(`  Current version: ${dep.installed}\n`);
         }
-        tree[packageName].deps.push({ peer, required, current, detail });
     });
-    
-    // Format tree output
-    let output = '';
-    for (const [pkg, info] of Object.entries(tree)) {
-        const icon = info.type === 'error' ? '❌' : info.type === 'warning' ? '⚠️' : '📦';
-        output += `${icon} ${chalk.bold(pkg)}\n`;
-        info.deps.forEach(({ peer, required, current, detail }) => {
-            output += `  ├─ ${chalk.cyan(peer)}\n`;
-            output += `  │  Required: ${chalk.yellow(required)}\n`;
-            output += `  │  Current:  ${current === 'missing' ? chalk.red(current) : chalk.gray(current)}\n`;
-            if (detail) {
-                output += `  │  Note:     ${chalk.dim(detail)}\n`;
-            }
-            output += `  │\n`;
-        });
-    }
     return output;
 }
 
-function formatSuggestedActions(issues, packageManager) {
-    const command = packageManager === 'yarn' ? 'yarn add' : 
-                   packageManager === 'pnpm' ? 'pnpm add' : 'npm install';
-    
-    let output = '';
-    const depsByVersion = {};
-    
-    // Group by required versions
-    issues.forEach(({ peer, required }) => {
-        if (!depsByVersion[required]) {
-            depsByVersion[required] = new Set();
-        }
-        depsByVersion[required].add(peer);
-    });
-    
-    // Format commands
-    Object.entries(depsByVersion).forEach(([version, peers]) => {
-        const packages = Array.from(peers);
-        if (packages.length === 1) {
-            output += `${command} ${packages[0]}@"${version}"\n`;
-        } else {
-            output += `# Install compatible version for multiple packages\n`;
-            output += `${command} ${packages.map(p => `${p}@"${version}"`).join(' ')}\n`;
-        }
-    });
-    
-    return output;
+function formatSuggestedActions(deps, packageManager) {
+    if (!deps || deps.length === 0) return '';
+
+    const depsToInstall = deps
+        .map(dep => {
+            if (typeof dep === 'string') {
+                const [name, version] = dep.split('@');
+                return version ? `${name}@"${version}"` : name;
+            }
+            return null;
+        })
+        .filter(Boolean);
+
+    if (depsToInstall.length === 0) return '';
+
+    const command = {
+        npm: 'npm install',
+        yarn: 'yarn add',
+        pnpm: 'pnpm add',
+        bun: 'bun add'
+    }[packageManager] || 'npm install';
+
+    return `\nSuggested fix:\n${chalk.cyan(`${command} ${depsToInstall.join(' ')}`)}`;
 }
 
 async function main() {
