@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.6.01] - 2024-12-08
+
+### Added
+
+- Better version compatibility checking using semver
+- Improved detection of peer dependency conflicts
+- Automatic installation of dependencies when node_modules is missing
+
+### Changed
+
+- Enhanced package manager detection logic
+- Improved error handling and reporting
+- Better progress indication during analysis
+- Separated missing dependencies from version conflicts
+
+### Fixed
+
+- Fixed ESM module compatibility issues
+- Improved handling of missing node_modules directory
+- Better error messages for installation failures
+
 ## [1.1.6] - 2024-12-07
 
 ### Added
