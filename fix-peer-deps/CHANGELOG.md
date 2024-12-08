@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.9] - 2024-12-08
+
+### Changed
+
+- Updated package.json bin field to use named export
+- Improved error output formatting for better readability
+
+### Fixed
+
+- Fixed duplicate dependency messages in output
+- Improved handling of Yarn modern versions verification
+
 ## [1.1.8] - 2024-12-08
 
 ### Changed
@@ -12,12 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved Yarn package manager detection, especially for Yarn Berry projects
 - Enhanced dependency analysis with better error handling and progress indication
 - Reorganized code structure for better maintainability
+- Updated package manager verification commands for better compatibility
+- Improved output formatting and deduplication of dependency messages
 
 ### Fixed
 
 - More reliable package manager detection using a clear priority order
 - Better error messaging during dependency analysis
 - Improved handling of environment variables for package manager detection
+- Fixed Yarn verification command to use 'info' instead of 'list'
+- Resolved duplicate output of missing dependencies
 
 ## [1.1.7] - 2024-12-08
 
