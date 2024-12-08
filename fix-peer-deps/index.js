@@ -8,7 +8,7 @@ import semver from 'semver';
 import { readFile, readdir } from 'fs/promises';
 import { resolve, join } from 'path';
 
-const VERSION = '1.1.6.1';  // Match with package.json
+const VERSION = '1.1.7';  // Match with package.json
 
 const IGNORE_PATTERNS = [
     /^@types\//,  // Ignore TypeScript type definitions
