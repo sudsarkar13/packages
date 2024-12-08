@@ -8,7 +8,7 @@ import semver from 'semver';
 import { readFile, readdir } from 'fs/promises';
 import { resolve, join } from 'path';
 
-const VERSION = '1.1.8';  // Match with package.json
+const VERSION = '1.1.9';  // Match with package.json
 
 const IGNORE_PATTERNS = [
     /^@types\//,  // Ignore TypeScript type definitions
@@ -189,34 +189,84 @@ async function analyzeDependencies(packageJson) {
     };
 }
 
+const PACKAGE_MANAGERS = {
+    npm: {
+        cmd: 'npm',
+        args: ['install', '--save-peer', '--legacy-peer-deps'],
+        verifyCmd: 'npm',
+        verifyArgs: ['ls', '--json', '--all']
+    },
+    yarn: {
+        cmd: 'yarn',
+        args: ['add'],
+        verifyCmd: 'yarn',
+        verifyArgs: ['info', '--json']  // Changed from 'list' to 'info'
+    },
+    pnpm: {
+        cmd: 'pnpm',
+        args: ['add'],
+        verifyCmd: 'pnpm',
+        verifyArgs: ['list', '--json']
+    },
+    bun: {
+        cmd: 'bun',
+        args: ['add'],
+        verifyCmd: 'bun',
+        verifyArgs: ['pm', 'ls', '--json']
+    }
+};
+
 async function analyzePeerDependencies(dependencies, onProgress) {
     const spinner = ora('Analyzing dependencies...').start();
     
     try {
-        const { missingPeerDeps, versionConflicts } = await analyzeDependencies(dependencies);
-        
-        if (missingPeerDeps.length > 0) {
-            spinner.warn('Found missing peer dependencies');
+        const missingDeps = new Set();
+        const versionConflicts = new Set();
+        let total = Object.keys(dependencies).length;
+        let current = 0;
+
+        for (const [name, info] of Object.entries(dependencies)) {
+            if (onProgress) {
+                onProgress(++current, total);
+            }
+
+            if (info.peerDependencies) {
+                for (const [peerName, requiredVersion] of Object.entries(info.peerDependencies)) {
+                    const installedVersion = dependencies[peerName]?.version;
+                    
+                    if (!installedVersion) {
+                        missingDeps.add(`${peerName}@${requiredVersion}`);
+                    } else if (!semver.satisfies(installedVersion, requiredVersion)) {
+                        versionConflicts.add(
+                            `${name} requires ${peerName}@${requiredVersion}, but ${installedVersion} is installed`
+                        );
+                    }
+                }
+            }
+        }
+
+        spinner.succeed('Analysis complete');
+
+        // Deduplicate and sort the output
+        const uniqueMissingDeps = [...new Set(missingDeps)].sort();
+        const uniqueVersionConflicts = [...new Set(versionConflicts)].sort();
+
+        if (uniqueMissingDeps.length > 0) {
             console.log('\nMissing peer dependencies:');
-            missingPeerDeps.forEach(dep => console.log(chalk.yellow(`- ${dep}`)));
+            uniqueMissingDeps.forEach(dep => console.log(`- ${dep}`));
         }
-        
-        if (versionConflicts.length > 0) {
-            spinner.warn('Found version conflicts');
+
+        if (uniqueVersionConflicts.length > 0) {
             console.log('\nVersion conflicts:');
-            versionConflicts.forEach(conflict => {
-                console.log(chalk.yellow(`- ${conflict.package} requires ${conflict.peer}@${conflict.required}, but ${conflict.installed} is installed`));
-            });
+            uniqueVersionConflicts.forEach(conflict => console.log(`- ${conflict}`));
         }
 
-        if (missingPeerDeps.length === 0 && versionConflicts.length === 0) {
-            spinner.succeed('No peer dependency issues found');
-        }
-
-        return { missingPeerDeps, versionConflicts };
+        return {
+            missingDeps: uniqueMissingDeps,
+            versionConflicts: uniqueVersionConflicts
+        };
     } catch (error) {
-        spinner.fail('Error analyzing dependencies');
-        console.error(chalk.red(error.message));
+        spinner.fail('Analysis failed');
         throw error;
     }
 }
@@ -224,7 +274,7 @@ async function analyzePeerDependencies(dependencies, onProgress) {
 async function autoFix(issues, packageManager) {
     console.log(chalk.bold('\n🔧 Automatic Fix Mode\n'));
     
-    if (!issues || !issues.missingPeerDeps || issues.missingPeerDeps.length === 0) {
+    if (!issues || !issues.missingDeps || issues.missingDeps.length === 0) {
         console.log(chalk.green('✨ No issues to fix!'));
         return;
     }
@@ -233,7 +283,7 @@ async function autoFix(issues, packageManager) {
     
     try {
         // Format the version ranges properly
-        const depsToInstall = issues.missingPeerDeps
+        const depsToInstall = issues.missingDeps
             .map(dep => {
                 if (typeof dep === 'string') {
                     const [name, version] = dep.split('@');
@@ -249,34 +299,7 @@ async function autoFix(issues, packageManager) {
         }
 
         // Package manager specific install commands
-        const commands = {
-            npm: {
-                cmd: 'npm',
-                args: ['install', '--save-peer', '--legacy-peer-deps'],
-                verifyCmd: 'npm',
-                verifyArgs: ['ls', '--json', '--all']
-            },
-            yarn: {
-                cmd: 'yarn',
-                args: ['add'],
-                verifyCmd: 'yarn',
-                verifyArgs: ['list', '--json']
-            },
-            pnpm: {
-                cmd: 'pnpm',
-                args: ['add', '--save-peer'],
-                verifyCmd: 'pnpm',
-                verifyArgs: ['list', '--json']
-            },
-            bun: {
-                cmd: 'bun',
-                args: ['add'],
-                verifyCmd: 'bun',
-                verifyArgs: ['pm', 'ls', '--json']
-            }
-        };
-
-        const command = commands[packageManager];
+        const command = PACKAGE_MANAGERS[packageManager];
         if (!command) {
             throw new Error(`Unsupported package manager: ${packageManager}`);
         }
@@ -416,10 +439,10 @@ async function main() {
 
         if (process.argv.includes('--fix')) {
             await autoFix(issues, packageManager);
-        } else if (issues.missingPeerDeps.length > 0 || issues.versionConflicts.length > 0) {
-            console.log(formatDependencyTree(issues.missingPeerDeps));
+        } else if (issues.missingDeps.length > 0 || issues.versionConflicts.length > 0) {
+            console.log(formatDependencyTree(issues.missingDeps));
             console.log(formatDependencyTree(issues.versionConflicts));
-            console.log(formatSuggestedActions(issues.missingPeerDeps, packageManager));
+            console.log(formatSuggestedActions(issues.missingDeps, packageManager));
             console.log(formatSuggestedActions(issues.versionConflicts, packageManager));
         } else {
             console.log(chalk.green('✨ No peer dependency issues found!'));
