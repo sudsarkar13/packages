@@ -8,7 +8,7 @@ import semver from 'semver';
 import { readFile, readdir } from 'fs/promises';
 import { resolve, join } from 'path';
 
-const VERSION = '1.1.10';  // Match with package.json
+const VERSION = '1.1.11';  // Match with package.json
 
 const IGNORE_PATTERNS = [
     /^@types\//,  // Ignore TypeScript type definitions
@@ -102,33 +102,32 @@ async function getDependencies(packageManager) {
             await readFile(resolve(process.cwd(), 'package.json'), 'utf8')
         );
         
-        // For Yarn, also check yarn.lock for more accurate dependency information
+        // For Yarn, use alternative methods to get dependency information
         if (packageManager === 'yarn') {
             try {
-                const yarnLockPath = resolve(process.cwd(), 'yarn.lock');
-                await readFile(yarnLockPath, 'utf8');
-                
-                // Use yarn why to get detailed dependency information
-                const { stdout } = await execa('yarn', ['why', '--json']);
-                const yarnInfo = JSON.parse(stdout);
-                
-                // Merge yarn information with package.json
-                if (yarnInfo && Array.isArray(yarnInfo)) {
-                    yarnInfo.forEach(dep => {
-                        if (dep.name && dep.children) {
-                            const peers = dep.children.filter(child => child.type === 'peerDependencies');
-                            if (peers.length > 0) {
-                                if (!packageJson.dependencies) packageJson.dependencies = {};
-                                packageJson.dependencies[dep.name] = {
-                                    version: dep.version,
-                                    peerDependencies: peers.reduce((acc, peer) => {
-                                        acc[peer.name] = peer.range;
-                                        return acc;
-                                    }, {})
-                                };
-                            }
+                // Get all dependencies from package.json
+                const allDeps = {
+                    ...packageJson.dependencies,
+                    ...packageJson.devDependencies,
+                    ...packageJson.peerDependencies
+                };
+
+                // Use yarn info for each package to get peer dependencies
+                for (const [name, version] of Object.entries(allDeps)) {
+                    try {
+                        const { stdout } = await execa('yarn', ['info', name, '--json']);
+                        const info = JSON.parse(stdout);
+                        
+                        if (info.data && info.data.peerDependencies) {
+                            if (!packageJson.dependencies) packageJson.dependencies = {};
+                            packageJson.dependencies[name] = {
+                                version: version.replace(/^\^|~/, ''),
+                                peerDependencies: info.data.peerDependencies
+                            };
                         }
-                    });
+                    } catch (pkgError) {
+                        console.debug(`Error getting info for ${name}:`, pkgError.message);
+                    }
                 }
             } catch (error) {
                 console.debug('Error reading Yarn information:', error.message);
@@ -141,6 +140,89 @@ async function getDependencies(packageManager) {
         spinner.fail('Failed to read package.json');
         throw new Error('Could not read package.json: ' + error.message);
     }
+}
+
+async function analyzePeerDependencies(dependencies, onProgress) {
+    const spinner = ora('Analyzing dependencies...').start();
+    
+    try {
+        const missingDeps = new Set();
+        const versionConflicts = new Set();
+        const allDeps = dependencies.dependencies || {};
+        let total = Object.keys(allDeps).length;
+        let current = 0;
+
+        for (const [name, info] of Object.entries(allDeps)) {
+            if (onProgress) {
+                onProgress(++current, total);
+            }
+
+            if (typeof info === 'string') {
+                // Skip if it's just a version string
+                continue;
+            }
+
+            const { version, peerDependencies } = info;
+            if (peerDependencies) {
+                for (const [peerName, requiredVersion] of Object.entries(peerDependencies)) {
+                    const installedVersion = findInstalledVersion(peerName, dependencies);
+                    
+                    if (!installedVersion) {
+                        missingDeps.add(`${peerName}@${requiredVersion}`);
+                    } else {
+                        try {
+                            if (!semver.satisfies(semver.clean(installedVersion) || installedVersion, requiredVersion)) {
+                                versionConflicts.add(
+                                    `${name} requires ${peerName}@${requiredVersion}, but ${installedVersion} is installed`
+                                );
+                            }
+                        } catch (error) {
+                            console.debug(`Error checking version for ${peerName}:`, error.message);
+                        }
+                    }
+                }
+            }
+        }
+
+        spinner.succeed('Analysis complete');
+
+        const uniqueMissingDeps = [...new Set(missingDeps)].sort();
+        const uniqueVersionConflicts = [...new Set(versionConflicts)].sort();
+
+        if (uniqueMissingDeps.length > 0) {
+            console.log('\nMissing peer dependencies:');
+            uniqueMissingDeps.forEach(dep => console.log(`- ${dep}`));
+        }
+
+        if (uniqueVersionConflicts.length > 0) {
+            console.log('\nVersion conflicts:');
+            uniqueVersionConflicts.forEach(conflict => console.log(`- ${conflict}`));
+        }
+
+        return {
+            missingDeps: uniqueMissingDeps,
+            versionConflicts: uniqueVersionConflicts,
+            hasIssues: uniqueMissingDeps.length > 0 || uniqueVersionConflicts.length > 0
+        };
+    } catch (error) {
+        spinner.fail('Analysis failed');
+        throw error;
+    }
+}
+
+function findInstalledVersion(packageName, dependencies) {
+    const allDeps = {
+        ...dependencies.dependencies,
+        ...dependencies.devDependencies,
+        ...dependencies.peerDependencies
+    };
+
+    if (allDeps[packageName]) {
+        return typeof allDeps[packageName] === 'string' 
+            ? allDeps[packageName].replace(/^\^|~/, '')
+            : allDeps[packageName].version;
+    }
+    return null;
 }
 
 async function analyzeDependencies(packageJson) {
@@ -222,94 +304,6 @@ async function analyzeDependencies(packageJson) {
     };
 }
 
-async function analyzePeerDependencies(dependencies, onProgress) {
-    const spinner = ora('Analyzing dependencies...').start();
-    
-    try {
-        const missingDeps = new Set();
-        const versionConflicts = new Set();
-        let total = Object.keys(dependencies).length;
-        let current = 0;
-
-        const addVersionConflict = (name, peerName, requiredVersion, installedVersion) => {
-            // Check if the installed version actually conflicts
-            try {
-                if (!semver.satisfies(semver.clean(installedVersion) || installedVersion, requiredVersion)) {
-                    versionConflicts.add(
-                        `${name} requires ${peerName}@${requiredVersion}, but ${installedVersion} is installed`
-                    );
-                }
-            } catch (error) {
-                console.debug(`Error checking version compatibility for ${peerName}: ${error.message}`);
-                // If we can't parse the version, assume it's a conflict
-                versionConflicts.add(
-                    `${name} requires ${peerName}@${requiredVersion}, but ${installedVersion} is installed (version parsing error)`
-                );
-            }
-        };
-
-        for (const [name, info] of Object.entries(dependencies)) {
-            if (onProgress) {
-                onProgress(++current, total);
-            }
-
-            if (info.peerDependencies) {
-                for (const [peerName, requiredVersion] of Object.entries(info.peerDependencies)) {
-                    const installedVersion = dependencies[peerName]?.version;
-                    
-                    if (!installedVersion) {
-                        missingDeps.add(`${peerName}@${requiredVersion}`);
-                    } else {
-                        addVersionConflict(name, peerName, requiredVersion, installedVersion);
-                    }
-                }
-            }
-        }
-
-        spinner.succeed('Analysis complete');
-
-        // Deduplicate and sort the output
-        const uniqueMissingDeps = [...new Set(missingDeps)].sort();
-        const uniqueVersionConflicts = [...new Set(versionConflicts)].sort();
-
-        return {
-            missingDeps: uniqueMissingDeps,
-            versionConflicts: uniqueVersionConflicts,
-            hasIssues: uniqueMissingDeps.length > 0 || uniqueVersionConflicts.length > 0
-        };
-    } catch (error) {
-        spinner.fail('Analysis failed');
-        throw error;
-    }
-}
-
-const PACKAGE_MANAGERS = {
-    npm: {
-        cmd: 'npm',
-        args: ['install', '--save-peer', '--legacy-peer-deps'],
-        verifyCmd: 'npm',
-        verifyArgs: ['ls', '--json', '--all']
-    },
-    yarn: {
-        cmd: 'yarn',
-        args: ['add'],
-        verifyCmd: 'yarn',
-        verifyArgs: ['info', '--json']  // Changed from 'list' to 'info'
-    },
-    pnpm: {
-        cmd: 'pnpm',
-        args: ['add'],
-        verifyCmd: 'pnpm',
-        verifyArgs: ['list', '--json']
-    },
-    bun: {
-        cmd: 'bun',
-        args: ['add'],
-        verifyCmd: 'bun',
-        verifyArgs: ['pm', 'ls', '--json']
-    }
-};
-
 async function autoFix(issues, packageManager) {
     console.log(chalk.bold('\n🔧 Automatic Fix Mode\n'));
     
@@ -338,10 +332,12 @@ async function autoFix(issues, packageManager) {
         }
 
         // Package manager specific install commands
-        const command = PACKAGE_MANAGERS[packageManager];
-        if (!command) {
-            throw new Error(`Unsupported package manager: ${packageManager}`);
-        }
+        const command = {
+            npm: 'npm install',
+            yarn: 'yarn add',
+            pnpm: 'pnpm add',
+            bun: 'bun add'
+        }[packageManager] || 'npm install';
 
         // Install dependencies
         spinner.text = 'Installing missing dependencies...';
